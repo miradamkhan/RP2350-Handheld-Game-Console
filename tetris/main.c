@@ -273,6 +273,10 @@ int main(void)
 {
     stdio_init_all();
 
+    gpio_init(PIN_DEBUG_LED);
+    gpio_set_dir(PIN_DEBUG_LED, GPIO_OUT);
+    gpio_put(PIN_DEBUG_LED, 1);
+
     /* Initialise hardware drivers. */
     display_init();
     input_init();

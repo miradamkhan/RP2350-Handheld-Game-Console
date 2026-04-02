@@ -167,10 +167,6 @@ void display_init(void) {
     gpio_init(TFT_PIN_RST);
     gpio_set_dir(TFT_PIN_RST, GPIO_OUT);
 
-    gpio_init(TFT_PIN_BL);
-    gpio_set_dir(TFT_PIN_BL, GPIO_OUT);
-    gpio_put(TFT_PIN_BL, 1);
-
     tft_hw_reset();
 
     tft_write_cmd(ILI9341_SWRESET);

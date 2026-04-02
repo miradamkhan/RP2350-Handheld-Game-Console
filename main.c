@@ -8,6 +8,7 @@
 #include "eeprom.h"
 #include "game.h"
 #include "input.h"
+#include "pins.h"
 
 #define GAME_DT_MS                 16
 #define HIGH_SCORE_EEPROM_ADDR     0x0000
@@ -26,6 +27,10 @@ static void run_hardware_tests(void) {
 
 int main(void) {
     stdio_init_all();
+
+    gpio_init(DEBUG_LED_PIN);
+    gpio_set_dir(DEBUG_LED_PIN, GPIO_OUT);
+    gpio_put(DEBUG_LED_PIN, 1);
 
     display_init();
     input_init();

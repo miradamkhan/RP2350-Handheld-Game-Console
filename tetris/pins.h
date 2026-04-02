@@ -14,34 +14,37 @@
 #ifndef PINS_H
 #define PINS_H
 
-/* ── SPI0: ILI9341 TFT Display ── */
-#define PIN_SPI_SCK     2   /* GP2  — SPI0 SCK  */
-#define PIN_SPI_MOSI    3   /* GP3  — SPI0 TX   */
-#define PIN_TFT_CS      5   /* GP5  — manual CS  */
-#define PIN_TFT_DC      6   /* GP6  — data/cmd   */
-#define PIN_TFT_RST     7   /* GP7  — reset      */
+/* ── SPI1: ILI9341 TFT Display ── */
+#define PIN_SPI_SCK     14  /* GP14 — SPI1 SCK */
+#define PIN_SPI_MOSI    15  /* GP15 — SPI1 TX  */
+#define PIN_TFT_CS      13  /* GP13 — manual CS */
+#define PIN_TFT_DC      12  /* GP12 — data/cmd  */
+#define PIN_TFT_RST     11  /* GP11 — reset     */
 
-#define SPI_PORT        spi0
-#define SPI_BAUD_HZ     40000000  /* 40 MHz — ILI9341 max is ~62 MHz */
+#define SPI_PORT        spi1
+#define SPI_BAUD_HZ     40000000  /* 40 MHz */
 
 /* ── I2C0: 24AA32AF EEPROM ── */
-#define PIN_I2C_SDA     16  /* GP16 — I2C0 SDA */
-#define PIN_I2C_SCL     17  /* GP17 — I2C0 SCL */
+#define PIN_I2C_SDA     4   /* GP4 — I2C0 SDA */
+#define PIN_I2C_SCL     5   /* GP5 — I2C0 SCL */
 
 #define I2C_PORT        i2c0
 #define I2C_BAUD_HZ     400000    /* 400 kHz fast-mode */
 
 /* ── ADC: Adafruit Joystick #512 ── */
-#define PIN_JOY_X       26  /* GP26 — ADC0 */
-#define PIN_JOY_Y       27  /* GP27 — ADC1 */
-#define ADC_CHAN_X       0
-#define ADC_CHAN_Y       1
+#define PIN_JOY_X       45  /* GP45 — ADC5 */
+#define PIN_JOY_Y       44  /* GP44 — ADC4 */
+#define ADC_CHAN_X       5
+#define ADC_CHAN_Y       4
 
 /* ── GPIO: Joystick select button (active-low, internal pull-up) ── */
-#define PIN_JOY_BTN     22  /* GP22 */
+#define PIN_JOY_BTN     6   /* GP6 */
 
 /* ── PWM: Speaker ── */
-#define PIN_SPEAKER     15  /* GP15 — PWM7 B */
+#define PIN_SPEAKER     30  /* GP30 */
+
+/* ── Debug ── */
+#define PIN_DEBUG_LED   17  /* GP17 */
 
 /* ── Display geometry (ILI9341) ── */
 #define TFT_WIDTH       240
