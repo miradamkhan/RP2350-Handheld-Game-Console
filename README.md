@@ -1,98 +1,146 @@
-# RP2350 Flappy Bird (ECE 362 Final Project)
+# 🎮 RP2350 Flappy Bird  
+### ECE 362 – Microprocessor Systems and Interfacing Final Project
 
-Embedded Flappy Bird implementation for an RP2350-based Proton board using Pico SDK style C.
+Embedded Flappy Bird implementation for an RP2350-based Proton board using Pico SDK style C. This project integrates real-time graphics, analog input, audio output, and persistent storage into a handheld gaming system.
 
-## Features
+---
 
-- `SPI` TFT graphics on MSP2202 module (`ILI9341` controller only)
-- `ADC` joystick X/Y sampling with normalization and deadzone
-- `GPIO` joystick select button with debounce + edge detect
-- `PWM` non-blocking audio tones (jump / score / collision)
-- `I2C` high-score persistence on `24AA32AF` EEPROM
-- Fixed timestep game loop with states: `MENU`, `PLAYING`, `GAME_OVER`
+## 🚀 Features
 
-## Project Structure
+- 🖥️ **SPI TFT Graphics** (ILI9341 display)
+- 🎮 **Analog Joystick Input** (ADC + GPIO button)
+- 🔊 **PWM Audio Output** (non-blocking sound effects)
+- 💾 **EEPROM High Score Storage** (I2C)
+- ⏱️ **Fixed Timestep Game Loop**
+- 🧠 Game states:
+  - MENU
+  - PLAYING
+  - GAME OVER
 
-- `main.c` - system init, fixed timestep loop, state-driven render/audio/storage
-- `game.c` / `game.h` - Flappy Bird physics, pipes, scoring, collisions, game state
-- `display.c` / `display.h` - ILI9341 SPI driver + drawing/render helpers
-- `input.c` / `input.h` - joystick ADC + button debounce/edge logic
-- `audio.c` / `audio.h` - PWM tone generation (non-blocking during gameplay)
-- `eeprom.c` / `eeprom.h` - 24AA32AF page-aware read/write helpers
-- `pins.h` - complete peripheral pin map
-- `CMakeLists.txt` - Pico SDK target configuration
+---
 
-## Pin Map (Current Configuration)
+## 📁 Project Structure
+main.c # system init, game loop, state handling
+game.c / game.h # Flappy Bird physics, pipes, scoring, collisions
+display.c / display.h# ILI9341 SPI driver + rendering helpers
+input.c / input.h # joystick ADC + button logic
+audio.c / audio.h # PWM tone generation (non-blocking)
+eeprom.c / eeprom.h # 24AA32AF I2C read/write logic
+pins.h # complete GPIO mapping
+CMakeLists.txt # Pico SDK build configuration
 
-Assumption: Proton board supports RP2-style alternate functions on these GPIOs.
-Verify with your exact board schematic before wiring.
 
-- **TFT SPI (ILI9341)**
-  - `SCK` -> GPIO18
-  - `MOSI` -> GPIO19
-  - `CS` -> GPIO17
-  - `DC` -> GPIO20
-  - `RST` -> GPIO21
-  - `BL` -> GPIO22
-- **Joystick (Adafruit analog 2-axis + select)**
-  - `X` -> GPIO26 (`ADC0`)
-  - `Y` -> GPIO27 (`ADC1`)
-  - `SEL` -> GPIO15 (active-low digital input)
-- **Audio (PWM speaker/buzzer)**
-  - `AUDIO_PWM` -> GPIO10
-- **EEPROM (24AA32AF, I2C)**
-  - `SDA` -> GPIO6 (`I2C1`)
-  - `SCL` -> GPIO7 (`I2C1`)
-  - I2C address assumed `0x50` (`A2/A1/A0` strapped low)
+---
 
-## Hardware Notes
+## 🔌 Pin Map (Final Configuration)
 
-- The MSP2202 module includes an SD slot, but this project **uses TFT only**.
-- Display is configured for ILI9341 landscape mode (`320x240` logical area).
-- EEPROM driver supports:
-  - total size `4096 bytes` (24AA32AF / 32 Kbit)
-  - page size `32 bytes`
-  - page-split writes
-  - write-cycle completion wait
+### 🟦 SPI Display (ILI9341 TFT)
+- SCK → GPIO14  
+- MOSI → GPIO15  
+- CS → GPIO13  
+- DC → GPIO12  
+- RST → GPIO11  
 
-## Build
+---
 
-1. Ensure Pico SDK is installed and environment is set (e.g. `PICO_SDK_PATH`).
-2. From project root:
-   - `mkdir build`
-   - `cd build`
-   - `cmake ..`
-   - `cmake --build .`
-3. Flash generated UF2 to your board (or use your standard debug/flash flow).
+### 🟩 I2C EEPROM (24AA32AF)
+- SDA → GPIO4  
+- SCL → GPIO5  
+- Address: `0x50` (A0–A2 tied low)
 
-## Hardware Bring-Up Tests
+---
 
-Test helpers are included:
+### 🟨 Joystick (Analog + Button)
+- X → GPIO45 (ADC)  
+- Y → GPIO44 (ADC)  
+- BTN → GPIO6 (active LOW)
 
-- `display_test()` in `display.c`
-- `input_test()` in `input.c` (continuous UART print loop)
-- `eeprom_test()` in `eeprom.c`
-- `audio_test()` in `audio.c`
+---
 
-`main.c` includes:
+### 🟧 Audio (PWM Speaker)
+- PWM → GPIO30  
 
-- `#define RUN_HW_TESTS 0`
+---
 
-Set to `1` to run display/audio/EEPROM test calls at startup.
-`input_test()` is intentionally left commented there because it is continuous and blocks.
+### 🟥 Debug
+- LED → GPIO17  
 
-## Gameplay Behavior
+---
 
-- Press joystick select button to start, jump, and return from game-over to menu.
-- Gravity + jump velocity model controls the bird.
-- Pipes scroll left; score increments when bird passes a pipe.
-- Collision with pipes or floor/ceiling ends run.
-- High score is read on startup and only written when exceeded.
+### 🟪 Free GPIO (Available)
+- GPIO7, GPIO8, GPIO9, GPIO10, GPIO18, GPIO19  
 
-## ECE 362 Demo Checklist
+---
 
-- Verify TFT draws color bars and score text (`display_test`).
-- Verify joystick ADC and button transitions over UART (`input_test`).
-- Verify EEPROM write/read match (`eeprom_test`).
-- Verify audible PWM tones (`audio_test`).
-- Run full game and confirm high score persists across reset.
+## ⚙️ Hardware Notes
+
+- TFT module: **MSP2202 (ILI9341)**  
+- Display mode: **320x240 landscape**
+- EEPROM:
+  - Size: 4KB (32 Kbit)
+  - Page size: 32 bytes
+  - Page-safe write handling implemented
+
+---
+
+## 🛠 Build Instructions
+
+Ensure Pico SDK is installed and environment variable is set:
+
+```bash
+export PICO_SDK_PATH=/path/to/pico-sdk
+mkdir build
+cd build
+cmake ..
+cmake --build .
+
+🧪 Hardware Bring-Up Tests
+
+Available test functions:
+
+display_test() → verifies TFT rendering
+input_test() → prints joystick ADC + button values (UART)
+audio_test() → plays PWM tones
+eeprom_test() → verifies EEPROM read/write
+
+Enable in main.c:
+#define RUN_HW_TESTS 1
+🎮 Gameplay
+Press joystick button to:
+Start game
+Jump
+Restart after game over
+Mechanics:
+Gravity + jump velocity physics
+Pipes scroll horizontally
+Score increases when passing pipes
+Collision ends the game
+High Score:
+Loaded at startup
+Saved only when exceeded
+Stored in EEPROM (persists across resets)
+✅ ECE 362 Demo Checklist
+✔ SPI → Display renders graphics and UI (display_test)
+✔ ADC + GPIO → Joystick input works (input_test)
+✔ PWM → Audio output functional (audio_test)
+✔ I2C → EEPROM read/write verified (eeprom_test)
+✔ Full system demo:
+Game runs smoothly
+Input is responsive
+Audio works
+High score persists
+🧠 Design Highlights
+Modular embedded C architecture
+Non-blocking gameplay loop
+Separation of hardware drivers and game logic
+Centralized pin configuration via pins.h
+🚀 Future Improvements
+Additional games (e.g., Tetris)
+Improved graphics and animations
+Battery-powered handheld version
+Custom PCB enclosure refinement
+👥 Team Members
+Enio Hysa
+Mir Adam Khan
+Abdul Malik
+Dixon Wagner
