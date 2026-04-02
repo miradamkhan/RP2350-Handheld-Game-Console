@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "Joystick")(type "KiCad")(uri "C:/Users/ADMIN/Downloads/COM-09032")(options "")(descr ""))
+)
