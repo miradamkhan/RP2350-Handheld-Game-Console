@@ -1,114 +1,149 @@
-#include <stdio.h>
+/*
+ * main.c — RP2350 Handheld Game Console main menu.
+ *
+ * Displays a game selection menu on boot.  The user scrolls with the
+ * joystick (up/down) and presses the button to launch a game.
+ * When the game returns, the menu is re-displayed.
+ */
 
 #include "pico/stdlib.h"
-#include "pico/time.h"
 
-#include "audio.h"
-#include "display.h"
-#include "eeprom.h"
-#include "game.h"
-#include "input.h"
 #include "pins.h"
+#include "display.h"
+#include "input.h"
+#include "audio.h"
+#include "eeprom.h"
+#include "tetris_render.h"
+#include "flappy_render.h"
 
-#define GAME_DT_MS                 16
-#define HIGH_SCORE_EEPROM_ADDR     0x0000
-#define RUN_HW_TESTS               0
+#include <stdio.h>
 
-static void run_hardware_tests(void) {
-    // Run each peripheral test independently before game starts.
-    display_test();
-    sleep_ms(500);
-    audio_test();
-    eeprom_test();
-    // NOTE: input_test() is continuous and blocks by design.
-    // Uncomment for dedicated joystick bring-up:
-    // input_test();
+/* ── Menu configuration ── */
+
+#define NUM_GAMES       2
+#define MENU_FRAME_MS  50
+
+static const char* game_names[NUM_GAMES] = {
+    "TETRIS",
+    "FLAPPY BIRD"
+};
+
+/* ── Menu rendering ── */
+
+static void draw_menu(int selected)
+{
+    display_fill(COLOR_BLACK);
+
+    /* Title */
+    display_string(30, 30, "SELECT GAME", COLOR_CYAN, COLOR_BLACK, 2);
+
+    /* Decorative line under title */
+    display_fill_rect(20, 52, 200, 2, COLOR_CYAN);
+
+    /* Menu items */
+    for (int i = 0; i < NUM_GAMES; i++) {
+        uint16_t y = (uint16_t)(100 + i * 60);
+        uint16_t box_x = 20;
+        uint16_t box_w = 200;
+        uint16_t box_h = 40;
+
+        if (i == selected) {
+            /* Highlighted item: filled box with bright text */
+            display_fill_rect(box_x, y, box_w, box_h, COLOR_CYAN);
+            display_string(box_x + 12, y + 12, game_names[i],
+                           COLOR_BLACK, COLOR_CYAN, 2);
+
+            /* Selection arrow */
+            display_string(box_x - 14, y + 12, ">", COLOR_YELLOW, COLOR_BLACK, 2);
+        } else {
+            /* Normal item: outlined box with dim text */
+            /* Top border */
+            display_fill_rect(box_x, y, box_w, 2, COLOR_GRAY);
+            /* Bottom border */
+            display_fill_rect(box_x, y + box_h - 2, box_w, 2, COLOR_GRAY);
+            /* Left border */
+            display_fill_rect(box_x, y, 2, box_h, COLOR_GRAY);
+            /* Right border */
+            display_fill_rect(box_x + box_w - 2, y, 2, box_h, COLOR_GRAY);
+
+            display_string(box_x + 12, y + 12, game_names[i],
+                           COLOR_WHITE, COLOR_BLACK, 2);
+        }
+    }
+
+    /* Footer hint */
+    display_string(16, 280, "UP/DOWN: Select", COLOR_DARK_GRAY, COLOR_BLACK, 1);
+    display_string(16, 294, "BUTTON:  Start", COLOR_DARK_GRAY, COLOR_BLACK, 1);
 }
 
-int main(void) {
+/* ── Main ── */
+
+int main(void)
+{
     stdio_init_all();
 
-    gpio_init(DEBUG_LED_PIN);
-    gpio_set_dir(DEBUG_LED_PIN, GPIO_OUT);
-    gpio_put(DEBUG_LED_PIN, 1);
+    gpio_init(PIN_DEBUG_LED);
+    gpio_set_dir(PIN_DEBUG_LED, GPIO_OUT);
+    gpio_put(PIN_DEBUG_LED, 1);
 
+    /* Initialise hardware drivers. */
     display_init();
     input_init();
     audio_init();
     eeprom_init();
 
-#if RUN_HW_TESTS
-    run_hardware_tests();
-#endif
+    int selected = 0;
+    joy_dir_t prev_dir = JOY_NONE;
 
-    uint16_t high_score_raw = 0;
-    if (!eeprom_read_u16(HIGH_SCORE_EEPROM_ADDR, &high_score_raw)) {
-        high_score_raw = 0;
-    }
-
-    Game game;
-    game_init(&game, (int)high_score_raw);
-
-    InputState input = {0};
-    absolute_time_t next_tick = make_timeout_time_ms(GAME_DT_MS);
-    GameState last_state = GAME_OVER;
-    int last_rendered_score = -1;
+    draw_menu(selected);
 
     while (true) {
-        input_update(&input);
+        uint32_t frame_start = to_ms_since_boot(get_absolute_time());
+
+        input_state_t in = input_read();
         audio_update();
 
-        while (time_reached(next_tick)) {
-            next_tick = delayed_by_ms(next_tick, GAME_DT_MS);
-            game_update(&game, &input, GAME_DT_MS / 1000.0f);
+        /* Joystick navigation (edge-triggered) */
+        if (in.direction == JOY_UP && prev_dir != JOY_UP) {
+            if (selected > 0) {
+                selected--;
+                audio_play_sfx(SFX_ROTATE);
+                draw_menu(selected);
+            }
+        }
+        if (in.direction == JOY_DOWN && prev_dir != JOY_DOWN) {
+            if (selected < NUM_GAMES - 1) {
+                selected++;
+                audio_play_sfx(SFX_ROTATE);
+                draw_menu(selected);
+            }
+        }
+        prev_dir = in.direction;
 
-            // Sound trigger handling by state/score transitions
-            if (game.state == GAME_PLAYING && input.button_just_pressed) {
-                audio_play_jump();
-            }
-            if (game.state == GAME_PLAYING && game.score != game.prev_score) {
-                if (game.prev_score >= 0 && game.score > game.prev_score) {
-                    audio_play_score();
-                }
-                game.prev_score = game.score;
-            }
-            if (last_state == GAME_PLAYING && game.state == GAME_OVER) {
-                audio_play_collision();
-            }
+        /* Button selects the game */
+        if (in.button_pressed) {
+            audio_play_sfx(SFX_MENU_SELECT);
+            sleep_ms(120); /* brief pause so the SFX is audible */
 
-            if (game.state == GAME_OVER && game.score > game.high_score) {
-                game.high_score = game.score;
-                (void)eeprom_write_u16(HIGH_SCORE_EEPROM_ADDR, (uint16_t)game.high_score);
-            }
-
-            // Render by game state
-            if (game.state == GAME_MENU && last_state != GAME_MENU) {
-                display_render_menu(game.high_score);
-            } else if (game.state == GAME_PLAYING) {
-                if (last_state != GAME_PLAYING) {
-                    last_rendered_score = -1;
-                }
-                display_render_playfield(
-                    game.pipe_draw_rects,
-                    game.pipe_rect_count,
-                    game.bird_rect_now,
-                    game.bird_rect_prev,
-                    game.redraw_all,
-                    game.score,
-                    last_rendered_score
-                );
-                game.redraw_all = false;
-                last_rendered_score = game.score;
-            } else { // GAME_OVER
-                if (last_state != GAME_OVER) {
-                    display_render_game_over(game.score, game.high_score);
-                }
+            switch (selected) {
+            case 0:
+                tetris_run();
+                break;
+            case 1:
+                flappy_run();
+                break;
             }
 
-            last_state = game.state;
+            /* Redraw menu when game returns */
+            prev_dir = JOY_NONE;
+            draw_menu(selected);
         }
 
-        tight_loop_contents();
+        /* Frame rate limiter */
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - frame_start;
+        if (elapsed < MENU_FRAME_MS) {
+            sleep_ms(MENU_FRAME_MS - elapsed);
+        }
     }
 
     return 0;

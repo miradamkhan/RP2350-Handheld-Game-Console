@@ -1,83 +1,111 @@
+/*
+ * audio.c — Non-blocking PWM audio for sound effects.
+ *
+ * A single tone plays at a time.  audio_play_tone() sets up the PWM
+ * frequency and records the end time; audio_update() silences it when
+ * the duration expires.  Sound effects are just canned
+ * frequency/duration pairs.
+ */
+
 #include "audio.h"
+#include "pins.h"
+
+#include "pico/stdlib.h"
+#include "hardware/pwm.h"
+#include "hardware/clocks.h"
+#include "hardware/gpio.h"
 
 #include <stdio.h>
 
-#include "hardware/clocks.h"
-#include "hardware/gpio.h"
-#include "hardware/pwm.h"
-#include "pico/stdlib.h"
-#include "pico/time.h"
+/* ── Internal state ── */
 
-#include "pins.h"
+static uint     pwm_slice    = 0;
+static uint     pwm_channel  = 0;
+static uint32_t tone_end_ms  = 0;
+static bool     tone_active  = false;
 
-typedef struct {
-    bool active;
-    absolute_time_t stop_time;
-    uint slice;
-    uint channel;
-} ToneState;
+/* ── Helpers ── */
 
-static ToneState g_tone;
-
-void audio_init(void) {
-    gpio_set_function(AUDIO_PWM_PIN, GPIO_FUNC_PWM);
-    g_tone.slice = pwm_gpio_to_slice_num(AUDIO_PWM_PIN);
-    g_tone.channel = pwm_gpio_to_channel(AUDIO_PWM_PIN);
-    pwm_set_enabled(g_tone.slice, false);
-    g_tone.active = false;
+static void speaker_off(void)
+{
+    pwm_set_enabled(pwm_slice, false);
+    tone_active = false;
 }
 
-void audio_play_tone(uint32_t freq_hz, uint32_t duration_ms) {
-    if (freq_hz == 0 || duration_ms == 0) return;
+/* ── Public API ── */
 
-    uint32_t clk_hz = clock_get_hz(clk_sys);
-    uint16_t divider = 4; // keeps wrap in range for audible frequencies
-    uint32_t top = (clk_hz / divider / freq_hz) - 1;
-    if (top > 65535) top = 65535;
-    if (top < 10) top = 10;
+void audio_init(void)
+{
+    gpio_set_function(PIN_SPEAKER, GPIO_FUNC_PWM);
+    pwm_slice   = pwm_gpio_to_slice_num(PIN_SPEAKER);
+    pwm_channel = pwm_gpio_to_channel(PIN_SPEAKER);
 
-    pwm_set_clkdiv_int_frac(g_tone.slice, divider, 0);
-    pwm_set_wrap(g_tone.slice, (uint16_t)top);
-    pwm_set_chan_level(g_tone.slice, g_tone.channel, (uint16_t)(top / 2)); // 50% duty
-    pwm_set_enabled(g_tone.slice, true);
-
-    g_tone.active = true;
-    g_tone.stop_time = delayed_by_ms(get_absolute_time(), duration_ms);
+    pwm_set_enabled(pwm_slice, false);
 }
 
-void audio_update(void) {
-    if (g_tone.active && absolute_time_diff_us(get_absolute_time(), g_tone.stop_time) <= 0) {
-        pwm_set_enabled(g_tone.slice, false);
-        g_tone.active = false;
+void audio_play_tone(uint16_t freq_hz, uint16_t duration_ms)
+{
+    if (freq_hz == 0) {
+        speaker_off();
+        return;
+    }
+
+    uint32_t sys_clk = clock_get_hz(clk_sys);
+
+    /*
+     * PWM frequency = sys_clk / (divider * wrap).
+     * Choose divider so wrap fits in 16 bits.
+     * Start with divider = 1, increase if wrap overflows.
+     */
+    uint32_t wrap = sys_clk / freq_hz;
+    uint16_t divider_int = 1;
+    while (wrap > 65535 && divider_int < 256) {
+        divider_int++;
+        wrap = sys_clk / (freq_hz * divider_int);
+    }
+    if (wrap < 2) wrap = 2;
+
+    pwm_set_clkdiv_int_frac(pwm_slice, divider_int, 0);
+    pwm_set_wrap(pwm_slice, (uint16_t)(wrap - 1));
+    pwm_set_chan_level(pwm_slice, pwm_channel, (uint16_t)(wrap / 2));  /* 50% duty */
+    pwm_set_enabled(pwm_slice, true);
+
+    tone_end_ms = to_ms_since_boot(get_absolute_time()) + duration_ms;
+    tone_active = true;
+}
+
+void audio_play_sfx(sfx_id_t sfx)
+{
+    switch (sfx) {
+    case SFX_ROTATE:      audio_play_tone(800,  60);  break;
+    case SFX_LINE_CLEAR:  audio_play_tone(1200, 150); break;
+    case SFX_LOCK:        audio_play_tone(400,  80);  break;
+    case SFX_GAME_OVER:   audio_play_tone(200,  500); break;
+    case SFX_MENU_SELECT: audio_play_tone(1000, 100); break;
+    case SFX_JUMP:        audio_play_tone(1200, 70);  break;
+    case SFX_SCORE:       audio_play_tone(1800, 60);  break;
+    case SFX_COLLISION:   audio_play_tone(250,  220); break;
     }
 }
 
-bool audio_is_busy(void) {
-    return g_tone.active;
+void audio_update(void)
+{
+    if (tone_active) {
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        if (now >= tone_end_ms) {
+            speaker_off();
+        }
+    }
 }
 
-void audio_play_jump(void) {
-    audio_play_tone(1200, 70);
-}
-
-void audio_play_score(void) {
-    audio_play_tone(1800, 60);
-}
-
-void audio_play_collision(void) {
-    audio_play_tone(250, 220);
-}
-
-void audio_test(void) {
-    printf("Audio test: 3 tones\n");
-    audio_play_tone(600, 120);
-    while (audio_is_busy()) audio_update();
-    sleep_ms(80);
-
-    audio_play_tone(1000, 120);
-    while (audio_is_busy()) audio_update();
-    sleep_ms(80);
-
-    audio_play_tone(1400, 120);
-    while (audio_is_busy()) audio_update();
+void audio_test(void)
+{
+    printf("=== Audio Test ===\n");
+    uint16_t freqs[] = {262, 330, 392, 523, 659, 784, 1047};
+    for (int i = 0; i < 7; i++) {
+        audio_play_tone(freqs[i], 200);
+        sleep_ms(250);
+    }
+    speaker_off();
+    printf("=== Audio Test Done ===\n");
 }

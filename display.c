@@ -1,302 +1,410 @@
+/*
+ * display.c — ILI9341 TFT driver over SPI for the RP2350 Proton board.
+ *
+ * Implements correct ILI9341 init, window addressing, pixel/rect drawing,
+ * and a minimal 5x7 bitmap font for score and text rendering.
+ */
+
 #include "display.h"
-
-#include <stdio.h>
-#include <string.h>
-
-#include "hardware/gpio.h"
-#include "hardware/spi.h"
-#include "pico/stdlib.h"
-
 #include "pins.h"
 
-// ILI9341 command set
-#define ILI9341_SWRESET   0x01
-#define ILI9341_SLPOUT    0x11
-#define ILI9341_GAMSET    0x26
-#define ILI9341_DISPOFF   0x28
-#define ILI9341_DISPON    0x29
-#define ILI9341_CASET     0x2A
-#define ILI9341_PASET     0x2B
-#define ILI9341_RAMWR     0x2C
-#define ILI9341_MADCTL    0x36
-#define ILI9341_PIXFMT    0x3A
-#define ILI9341_FRMCTR1   0xB1
-#define ILI9341_DFUNCTR   0xB6
-#define ILI9341_PWCTR1    0xC0
-#define ILI9341_PWCTR2    0xC1
-#define ILI9341_VMCTR1    0xC5
-#define ILI9341_VMCTR2    0xC7
-#define ILI9341_GMCTRP1   0xE0
-#define ILI9341_GMCTRN1   0xE1
+#include "pico/stdlib.h"
+#include "hardware/spi.h"
+#include "hardware/gpio.h"
 
-static inline void tft_select(void) { gpio_put(TFT_PIN_CS, 0); }
-static inline void tft_deselect(void) { gpio_put(TFT_PIN_CS, 1); }
-static inline void tft_dc_cmd(void) { gpio_put(TFT_PIN_DC, 0); }
-static inline void tft_dc_data(void) { gpio_put(TFT_PIN_DC, 1); }
+#include <string.h>
 
-static void tft_write_cmd(uint8_t cmd) {
-    tft_select();
-    tft_dc_cmd();
-    spi_write_blocking(TFT_SPI_PORT, &cmd, 1);
-    tft_deselect();
+/* ──────────────────────── low-level helpers ──────────────────────── */
+
+static inline void cs_select(void)   { gpio_put(PIN_TFT_CS, 0); }
+static inline void cs_deselect(void) { gpio_put(PIN_TFT_CS, 1); }
+static inline void dc_command(void)  { gpio_put(PIN_TFT_DC, 0); }
+static inline void dc_data(void)     { gpio_put(PIN_TFT_DC, 1); }
+
+static void spi_write_byte(uint8_t b)
+{
+    spi_write_blocking(SPI_PORT, &b, 1);
 }
 
-static void tft_write_data(const uint8_t* data, size_t len) {
-    tft_select();
-    tft_dc_data();
-    spi_write_blocking(TFT_SPI_PORT, data, len);
-    tft_deselect();
+static void send_command(uint8_t cmd)
+{
+    dc_command();
+    cs_select();
+    spi_write_byte(cmd);
+    cs_deselect();
 }
 
-static void tft_set_addr_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
-    uint8_t data[4];
-    tft_write_cmd(ILI9341_CASET);
-    data[0] = (uint8_t)(x0 >> 8);
-    data[1] = (uint8_t)(x0 & 0xFF);
-    data[2] = (uint8_t)(x1 >> 8);
-    data[3] = (uint8_t)(x1 & 0xFF);
-    tft_write_data(data, 4);
-
-    tft_write_cmd(ILI9341_PASET);
-    data[0] = (uint8_t)(y0 >> 8);
-    data[1] = (uint8_t)(y0 & 0xFF);
-    data[2] = (uint8_t)(y1 >> 8);
-    data[3] = (uint8_t)(y1 & 0xFF);
-    tft_write_data(data, 4);
-
-    tft_write_cmd(ILI9341_RAMWR);
+static void send_data(const uint8_t *data, uint16_t len)
+{
+    dc_data();
+    cs_select();
+    spi_write_blocking(SPI_PORT, data, len);
+    cs_deselect();
 }
 
-void display_draw_pixel(uint16_t x, uint16_t y, uint16_t color) {
-    if (x >= DISPLAY_WIDTH || y >= DISPLAY_HEIGHT) return;
-    uint8_t px[2] = {(uint8_t)(color >> 8), (uint8_t)(color & 0xFF)};
-    tft_set_addr_window(x, y, x, y);
-    tft_write_data(px, sizeof(px));
-}
 
-void display_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
-    if (x >= DISPLAY_WIDTH || y >= DISPLAY_HEIGHT || w == 0 || h == 0) return;
-    if (x + w > DISPLAY_WIDTH) w = DISPLAY_WIDTH - x;
-    if (y + h > DISPLAY_HEIGHT) h = DISPLAY_HEIGHT - y;
-
-    tft_set_addr_window(x, y, (uint16_t)(x + w - 1), (uint16_t)(y + h - 1));
-
-    uint8_t line[DISPLAY_WIDTH * 2];
-    for (uint16_t i = 0; i < w; i++) {
-        line[2 * i] = (uint8_t)(color >> 8);
-        line[2 * i + 1] = (uint8_t)(color & 0xFF);
-    }
-
-    tft_select();
-    tft_dc_data();
-    for (uint16_t row = 0; row < h; row++) {
-        spi_write_blocking(TFT_SPI_PORT, line, w * 2);
-    }
-    tft_deselect();
-}
-
-void display_fill_screen(uint16_t color) {
-    display_fill_rect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT, color);
-}
-
-void display_draw_sprite_8x8(uint16_t x, uint16_t y, const uint8_t sprite[8], uint16_t fg, uint16_t bg) {
-    for (uint16_t row = 0; row < 8; row++) {
-        for (uint16_t col = 0; col < 8; col++) {
-            bool bit = (sprite[row] >> (7 - col)) & 0x1;
-            display_draw_pixel((uint16_t)(x + col), (uint16_t)(y + row), bit ? fg : bg);
-        }
+static void send_command_params(uint8_t cmd, const uint8_t *params, uint16_t len)
+{
+    send_command(cmd);
+    if (len > 0) {
+        send_data(params, len);
     }
 }
 
-static const uint8_t digit_3x5[10][5] = {
-    {0b111, 0b101, 0b101, 0b101, 0b111}, // 0
-    {0b010, 0b110, 0b010, 0b010, 0b111}, // 1
-    {0b111, 0b001, 0b111, 0b100, 0b111}, // 2
-    {0b111, 0b001, 0b111, 0b001, 0b111}, // 3
-    {0b101, 0b101, 0b111, 0b001, 0b001}, // 4
-    {0b111, 0b100, 0b111, 0b001, 0b111}, // 5
-    {0b111, 0b100, 0b111, 0b101, 0b111}, // 6
-    {0b111, 0b001, 0b010, 0b100, 0b100}, // 7
-    {0b111, 0b101, 0b111, 0b101, 0b111}, // 8
-    {0b111, 0b101, 0b111, 0b001, 0b111}, // 9
+/* ──────────────────────── ILI9341 init sequence ──────────────────── */
+
+void display_init(void)
+{
+    /* Initialise SPI at target baud. */
+    spi_init(SPI_PORT, SPI_BAUD_HZ);
+    gpio_set_function(PIN_SPI_SCK,  GPIO_FUNC_SPI);
+    gpio_set_function(PIN_SPI_MOSI, GPIO_FUNC_SPI);
+
+    /* CS, DC, RST as manual GPIO. */
+    gpio_init(PIN_TFT_CS);
+    gpio_set_dir(PIN_TFT_CS, GPIO_OUT);
+    gpio_put(PIN_TFT_CS, 1);
+
+    gpio_init(PIN_TFT_DC);
+    gpio_set_dir(PIN_TFT_DC, GPIO_OUT);
+
+    gpio_init(PIN_TFT_RST);
+    gpio_set_dir(PIN_TFT_RST, GPIO_OUT);
+
+    /* Hardware reset. */
+    gpio_put(PIN_TFT_RST, 1);
+    sleep_ms(10);
+    gpio_put(PIN_TFT_RST, 0);
+    sleep_ms(10);
+    gpio_put(PIN_TFT_RST, 1);
+    sleep_ms(120);
+
+    /* Software reset. */
+    send_command(0x01);
+    sleep_ms(120);
+
+    /* Display OFF during configuration. */
+    send_command(0x28);
+
+    /* Power Control A */
+    {
+        uint8_t p[] = {0x39, 0x2C, 0x00, 0x34, 0x02};
+        send_command_params(0xCB, p, sizeof(p));
+    }
+    /* Power Control B */
+    {
+        uint8_t p[] = {0x00, 0xC1, 0x30};
+        send_command_params(0xCF, p, sizeof(p));
+    }
+    /* Driver Timing A */
+    {
+        uint8_t p[] = {0x85, 0x00, 0x78};
+        send_command_params(0xE8, p, sizeof(p));
+    }
+    /* Driver Timing B */
+    {
+        uint8_t p[] = {0x00, 0x00};
+        send_command_params(0xEA, p, sizeof(p));
+    }
+    /* Power-on Sequence */
+    {
+        uint8_t p[] = {0x64, 0x03, 0x12, 0x81};
+        send_command_params(0xED, p, sizeof(p));
+    }
+    /* Pump ratio */
+    {
+        uint8_t p[] = {0x20};
+        send_command_params(0xF7, p, sizeof(p));
+    }
+    /* Power Control 1 — GVDD = 4.60V */
+    {
+        uint8_t p[] = {0x23};
+        send_command_params(0xC0, p, sizeof(p));
+    }
+    /* Power Control 2 */
+    {
+        uint8_t p[] = {0x10};
+        send_command_params(0xC1, p, sizeof(p));
+    }
+    /* VCOM Control 1 */
+    {
+        uint8_t p[] = {0x3E, 0x28};
+        send_command_params(0xC5, p, sizeof(p));
+    }
+    /* VCOM Control 2 */
+    {
+        uint8_t p[] = {0x86};
+        send_command_params(0xC7, p, sizeof(p));
+    }
+    /* Memory Access Control — portrait, RGB */
+    {
+        uint8_t p[] = {0x48};
+        send_command_params(0x36, p, sizeof(p));
+    }
+    /* Pixel format: 16 bit/pixel */
+    {
+        uint8_t p[] = {0x55};
+        send_command_params(0x3A, p, sizeof(p));
+    }
+    /* Frame Rate 70 Hz */
+    {
+        uint8_t p[] = {0x00, 0x1B};
+        send_command_params(0xB1, p, sizeof(p));
+    }
+    /* Display Function Control */
+    {
+        uint8_t p[] = {0x08, 0x82, 0x27};
+        send_command_params(0xB6, p, sizeof(p));
+    }
+    /* Gamma set — curve 1 */
+    {
+        uint8_t p[] = {0x01};
+        send_command_params(0x26, p, sizeof(p));
+    }
+    /* Positive Gamma */
+    {
+        uint8_t p[] = {
+            0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E,
+            0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00
+        };
+        send_command_params(0xE0, p, sizeof(p));
+    }
+    /* Negative Gamma */
+    {
+        uint8_t p[] = {
+            0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31,
+            0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F
+        };
+        send_command_params(0xE1, p, sizeof(p));
+    }
+
+    /* Exit sleep and turn display on. */
+    send_command(0x11);  /* Sleep OUT */
+    sleep_ms(120);
+    send_command(0x29);  /* Display ON */
+    sleep_ms(20);
+}
+
+/* ──────────────────────── drawing primitives ─────────────────────── */
+
+void display_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+{
+    /* Column Address Set */
+    send_command(0x2A);
+    {
+        uint8_t p[] = {
+            (uint8_t)(x0 >> 8), (uint8_t)(x0),
+            (uint8_t)(x1 >> 8), (uint8_t)(x1)
+        };
+        send_data(p, 4);
+    }
+    /* Row Address Set */
+    send_command(0x2B);
+    {
+        uint8_t p[] = {
+            (uint8_t)(y0 >> 8), (uint8_t)(y0),
+            (uint8_t)(y1 >> 8), (uint8_t)(y1)
+        };
+        send_data(p, 4);
+    }
+    /* Memory Write */
+    send_command(0x2C);
+}
+
+void display_pixel(uint16_t x, uint16_t y, uint16_t color)
+{
+    if (x >= TFT_WIDTH || y >= TFT_HEIGHT) return;
+    display_set_window(x, y, x, y);
+    uint8_t d[] = {(uint8_t)(color >> 8), (uint8_t)(color)};
+    send_data(d, 2);
+}
+
+void display_fill(uint16_t color)
+{
+    display_fill_rect(0, 0, TFT_WIDTH, TFT_HEIGHT, color);
+}
+
+void display_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                       uint16_t color)
+{
+    if (x >= TFT_WIDTH || y >= TFT_HEIGHT) return;
+    if (x + w > TFT_WIDTH)  w = TFT_WIDTH  - x;
+    if (y + h > TFT_HEIGHT) h = TFT_HEIGHT - y;
+
+    display_set_window(x, y, x + w - 1, y + h - 1);
+
+    uint8_t hi = (uint8_t)(color >> 8);
+    uint8_t lo = (uint8_t)(color);
+
+    /* Send in row-sized bursts to keep stack usage bounded. */
+    uint8_t row_buf[TFT_WIDTH * 2];
+    uint16_t row_bytes = w * 2;
+    for (uint16_t i = 0; i < row_bytes; i += 2) {
+        row_buf[i]     = hi;
+        row_buf[i + 1] = lo;
+    }
+
+    dc_data();
+    cs_select();
+    for (uint16_t r = 0; r < h; r++) {
+        spi_write_blocking(SPI_PORT, row_buf, row_bytes);
+    }
+    cs_deselect();
+}
+
+/* ──────────────────────── 5x7 bitmap font ────────────────────────── */
+
+/* Covers ASCII 32 (' ') through 126 ('~'). Each glyph is 5 columns of
+ * 7-bit rows, packed into uint8_t[5].  Row bit 0 is the top pixel.      */
+static const uint8_t font5x7[][5] = {
+    {0x00,0x00,0x00,0x00,0x00}, /* 32 ' ' */
+    {0x00,0x00,0x5F,0x00,0x00}, /* 33 '!' */
+    {0x00,0x07,0x00,0x07,0x00}, /* 34 '"' */
+    {0x14,0x7F,0x14,0x7F,0x14}, /* 35 '#' */
+    {0x24,0x2A,0x7F,0x2A,0x12}, /* 36 '$' */
+    {0x23,0x13,0x08,0x64,0x62}, /* 37 '%' */
+    {0x36,0x49,0x55,0x22,0x50}, /* 38 '&' */
+    {0x00,0x05,0x03,0x00,0x00}, /* 39 ''' */
+    {0x00,0x1C,0x22,0x41,0x00}, /* 40 '(' */
+    {0x00,0x41,0x22,0x1C,0x00}, /* 41 ')' */
+    {0x14,0x08,0x3E,0x08,0x14}, /* 42 '*' */
+    {0x08,0x08,0x3E,0x08,0x08}, /* 43 '+' */
+    {0x00,0x50,0x30,0x00,0x00}, /* 44 ',' */
+    {0x08,0x08,0x08,0x08,0x08}, /* 45 '-' */
+    {0x00,0x60,0x60,0x00,0x00}, /* 46 '.' */
+    {0x20,0x10,0x08,0x04,0x02}, /* 47 '/' */
+    {0x3E,0x51,0x49,0x45,0x3E}, /* 48 '0' */
+    {0x00,0x42,0x7F,0x40,0x00}, /* 49 '1' */
+    {0x42,0x61,0x51,0x49,0x46}, /* 50 '2' */
+    {0x21,0x41,0x45,0x4B,0x31}, /* 51 '3' */
+    {0x18,0x14,0x12,0x7F,0x10}, /* 52 '4' */
+    {0x27,0x45,0x45,0x45,0x39}, /* 53 '5' */
+    {0x3C,0x4A,0x49,0x49,0x30}, /* 54 '6' */
+    {0x01,0x71,0x09,0x05,0x03}, /* 55 '7' */
+    {0x36,0x49,0x49,0x49,0x36}, /* 56 '8' */
+    {0x06,0x49,0x49,0x29,0x1E}, /* 57 '9' */
+    {0x00,0x36,0x36,0x00,0x00}, /* 58 ':' */
+    {0x00,0x56,0x36,0x00,0x00}, /* 59 ';' */
+    {0x08,0x14,0x22,0x41,0x00}, /* 60 '<' */
+    {0x14,0x14,0x14,0x14,0x14}, /* 61 '=' */
+    {0x00,0x41,0x22,0x14,0x08}, /* 62 '>' */
+    {0x02,0x01,0x51,0x09,0x06}, /* 63 '?' */
+    {0x32,0x49,0x79,0x41,0x3E}, /* 64 '@' */
+    {0x7E,0x11,0x11,0x11,0x7E}, /* 65 'A' */
+    {0x7F,0x49,0x49,0x49,0x36}, /* 66 'B' */
+    {0x3E,0x41,0x41,0x41,0x22}, /* 67 'C' */
+    {0x7F,0x41,0x41,0x22,0x1C}, /* 68 'D' */
+    {0x7F,0x49,0x49,0x49,0x41}, /* 69 'E' */
+    {0x7F,0x09,0x09,0x09,0x01}, /* 70 'F' */
+    {0x3E,0x41,0x49,0x49,0x7A}, /* 71 'G' */
+    {0x7F,0x08,0x08,0x08,0x7F}, /* 72 'H' */
+    {0x00,0x41,0x7F,0x41,0x00}, /* 73 'I' */
+    {0x20,0x40,0x41,0x3F,0x01}, /* 74 'J' */
+    {0x7F,0x08,0x14,0x22,0x41}, /* 75 'K' */
+    {0x7F,0x40,0x40,0x40,0x40}, /* 76 'L' */
+    {0x7F,0x02,0x0C,0x02,0x7F}, /* 77 'M' */
+    {0x7F,0x04,0x08,0x10,0x7F}, /* 78 'N' */
+    {0x3E,0x41,0x41,0x41,0x3E}, /* 79 'O' */
+    {0x7F,0x09,0x09,0x09,0x06}, /* 80 'P' */
+    {0x3E,0x41,0x51,0x21,0x5E}, /* 81 'Q' */
+    {0x7F,0x09,0x19,0x29,0x46}, /* 82 'R' */
+    {0x46,0x49,0x49,0x49,0x31}, /* 83 'S' */
+    {0x01,0x01,0x7F,0x01,0x01}, /* 84 'T' */
+    {0x3F,0x40,0x40,0x40,0x3F}, /* 85 'U' */
+    {0x1F,0x20,0x40,0x20,0x1F}, /* 86 'V' */
+    {0x3F,0x40,0x38,0x40,0x3F}, /* 87 'W' */
+    {0x63,0x14,0x08,0x14,0x63}, /* 88 'X' */
+    {0x07,0x08,0x70,0x08,0x07}, /* 89 'Y' */
+    {0x61,0x51,0x49,0x45,0x43}, /* 90 'Z' */
+    {0x00,0x7F,0x41,0x41,0x00}, /* 91 '[' */
+    {0x02,0x04,0x08,0x10,0x20}, /* 92 '\\' */
+    {0x00,0x41,0x41,0x7F,0x00}, /* 93 ']' */
+    {0x04,0x02,0x01,0x02,0x04}, /* 94 '^' */
+    {0x40,0x40,0x40,0x40,0x40}, /* 95 '_' */
+    {0x00,0x01,0x02,0x04,0x00}, /* 96 '`' */
+    {0x20,0x54,0x54,0x54,0x78}, /* 97 'a' */
+    {0x7F,0x48,0x44,0x44,0x38}, /* 98 'b' */
+    {0x38,0x44,0x44,0x44,0x20}, /* 99 'c' */
+    {0x38,0x44,0x44,0x48,0x7F}, /*100 'd' */
+    {0x38,0x54,0x54,0x54,0x18}, /*101 'e' */
+    {0x08,0x7E,0x09,0x01,0x02}, /*102 'f' */
+    {0x0C,0x52,0x52,0x52,0x3E}, /*103 'g' */
+    {0x7F,0x08,0x04,0x04,0x78}, /*104 'h' */
+    {0x00,0x44,0x7D,0x40,0x00}, /*105 'i' */
+    {0x20,0x40,0x44,0x3D,0x00}, /*106 'j' */
+    {0x7F,0x10,0x28,0x44,0x00}, /*107 'k' */
+    {0x00,0x41,0x7F,0x40,0x00}, /*108 'l' */
+    {0x7C,0x04,0x18,0x04,0x78}, /*109 'm' */
+    {0x7C,0x08,0x04,0x04,0x78}, /*110 'n' */
+    {0x38,0x44,0x44,0x44,0x38}, /*111 'o' */
+    {0x7C,0x14,0x14,0x14,0x08}, /*112 'p' */
+    {0x08,0x14,0x14,0x18,0x7C}, /*113 'q' */
+    {0x7C,0x08,0x04,0x04,0x08}, /*114 'r' */
+    {0x48,0x54,0x54,0x54,0x20}, /*115 's' */
+    {0x04,0x3F,0x44,0x40,0x20}, /*116 't' */
+    {0x3C,0x40,0x40,0x20,0x7C}, /*117 'u' */
+    {0x1C,0x20,0x40,0x20,0x1C}, /*118 'v' */
+    {0x3C,0x40,0x30,0x40,0x3C}, /*119 'w' */
+    {0x44,0x28,0x10,0x28,0x44}, /*120 'x' */
+    {0x0C,0x50,0x50,0x50,0x3C}, /*121 'y' */
+    {0x44,0x64,0x54,0x4C,0x44}, /*122 'z' */
+    {0x00,0x08,0x36,0x41,0x00}, /*123 '{' */
+    {0x00,0x00,0x7F,0x00,0x00}, /*124 '|' */
+    {0x00,0x41,0x36,0x08,0x00}, /*125 '}' */
+    {0x10,0x08,0x08,0x10,0x08}, /*126 '~' */
 };
 
-static void draw_digit_3x5(uint16_t x, uint16_t y, int d, uint16_t fg, uint16_t bg) {
-    if (d < 0 || d > 9) return;
-    for (uint16_t r = 0; r < 5; r++) {
-        for (uint16_t c = 0; c < 3; c++) {
-            bool on = (digit_3x5[d][r] >> (2 - c)) & 1;
-            display_draw_pixel((uint16_t)(x + c), (uint16_t)(y + r), on ? fg : bg);
+uint16_t display_char(uint16_t x, uint16_t y, char c, uint16_t color,
+                      uint16_t bg, uint8_t scale)
+{
+    if (c < 32 || c > 126) c = '?';
+    const uint8_t *glyph = font5x7[c - 32];
+
+    for (uint8_t col = 0; col < 5; col++) {
+        uint8_t line = glyph[col];
+        for (uint8_t row = 0; row < 7; row++) {
+            uint16_t clr = (line & (1 << row)) ? color : bg;
+            if (scale == 1) {
+                display_pixel(x + col, y + row, clr);
+            } else {
+                display_fill_rect(x + col * scale, y + row * scale,
+                                  scale, scale, clr);
+            }
         }
     }
-}
-
-void display_draw_score(uint16_t x, uint16_t y, int score, uint16_t color, uint16_t bg) {
-    if (score < 0) score = 0;
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%d", score);
-    uint16_t cursor = x;
-    for (size_t i = 0; i < strlen(buf); i++) {
-        int d = buf[i] - '0';
-        draw_digit_3x5(cursor, y, d, color, bg);
-        cursor += 4;
-    }
-}
-
-static void tft_hw_reset(void) {
-    gpio_put(TFT_PIN_RST, 0);
-    sleep_ms(20);
-    gpio_put(TFT_PIN_RST, 1);
-    sleep_ms(120);
-}
-
-void display_init(void) {
-    // Conservative clock for common breakout wiring quality.
-    spi_init(TFT_SPI_PORT, 32 * 1000 * 1000);
-    gpio_set_function(TFT_PIN_SCK, GPIO_FUNC_SPI);
-    gpio_set_function(TFT_PIN_MOSI, GPIO_FUNC_SPI);
-
-    gpio_init(TFT_PIN_CS);
-    gpio_set_dir(TFT_PIN_CS, GPIO_OUT);
-    gpio_put(TFT_PIN_CS, 1);
-
-    gpio_init(TFT_PIN_DC);
-    gpio_set_dir(TFT_PIN_DC, GPIO_OUT);
-    gpio_put(TFT_PIN_DC, 1);
-
-    gpio_init(TFT_PIN_RST);
-    gpio_set_dir(TFT_PIN_RST, GPIO_OUT);
-
-    tft_hw_reset();
-
-    tft_write_cmd(ILI9341_SWRESET);
-    sleep_ms(150);
-
-    tft_write_cmd(ILI9341_DISPOFF);
-    tft_write_cmd(ILI9341_SLPOUT);
-    sleep_ms(150);
-
-    // Pixel format = RGB565
-    tft_write_cmd(ILI9341_PIXFMT);
-    uint8_t pixfmt = 0x55;
-    tft_write_data(&pixfmt, 1);
-
-    // Landscape orientation, BGR color order.
-    tft_write_cmd(ILI9341_MADCTL);
-    uint8_t madctl = 0x28;
-    tft_write_data(&madctl, 1);
-
-    uint8_t frmctr1[] = {0x00, 0x18};
-    tft_write_cmd(ILI9341_FRMCTR1);
-    tft_write_data(frmctr1, sizeof(frmctr1));
-
-    uint8_t dfunc[] = {0x08, 0x82, 0x27};
-    tft_write_cmd(ILI9341_DFUNCTR);
-    tft_write_data(dfunc, sizeof(dfunc));
-
-    uint8_t pwctr1 = 0x23;
-    tft_write_cmd(ILI9341_PWCTR1);
-    tft_write_data(&pwctr1, 1);
-
-    uint8_t pwctr2 = 0x10;
-    tft_write_cmd(ILI9341_PWCTR2);
-    tft_write_data(&pwctr2, 1);
-
-    uint8_t vmctr1[] = {0x3E, 0x28};
-    tft_write_cmd(ILI9341_VMCTR1);
-    tft_write_data(vmctr1, sizeof(vmctr1));
-
-    uint8_t vmctr2 = 0x86;
-    tft_write_cmd(ILI9341_VMCTR2);
-    tft_write_data(&vmctr2, 1);
-
-    uint8_t gamma = 0x01;
-    tft_write_cmd(ILI9341_GAMSET);
-    tft_write_data(&gamma, 1);
-
-    uint8_t gm_pos[] = {0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00};
-    tft_write_cmd(ILI9341_GMCTRP1);
-    tft_write_data(gm_pos, sizeof(gm_pos));
-
-    uint8_t gm_neg[] = {0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F};
-    tft_write_cmd(ILI9341_GMCTRN1);
-    tft_write_data(gm_neg, sizeof(gm_neg));
-
-    tft_write_cmd(ILI9341_DISPON);
-    sleep_ms(100);
-
-    display_fill_screen(COLOR_BLACK);
-}
-
-static void clear_rect_safe(Rect r) {
-    if (r.w <= 0 || r.h <= 0) return;
-    display_fill_rect((uint16_t)r.x, (uint16_t)r.y, (uint16_t)r.w, (uint16_t)r.h, COLOR_BLACK);
-}
-
-static void draw_pipe(Rect p) {
-    if (p.w <= 0 || p.h <= 0) return;
-    display_fill_rect((uint16_t)p.x, (uint16_t)p.y, (uint16_t)p.w, (uint16_t)p.h, COLOR_GREEN);
-}
-
-void display_render_playfield(
-    const Rect* pipes,
-    int pipe_count,
-    Rect bird_now,
-    Rect bird_prev,
-    bool redraw_all,
-    int score_now,
-    int score_prev
-) {
-    if (redraw_all) {
-        display_fill_screen(COLOR_BLACK);
+    /* 1-pixel gap between characters */
+    if (scale == 1) {
+        for (uint8_t row = 0; row < 7; row++)
+            display_pixel(x + 5, y + row, bg);
+    } else {
+        display_fill_rect(x + 5 * scale, y, scale, 7 * scale, bg);
     }
 
-    // Erase old bird and score area; draw new bird.
-    if (!redraw_all) {
-        clear_rect_safe(bird_prev);
-        if (score_now != score_prev) {
-            display_fill_rect(2, 2, 40, 8, COLOR_BLACK);
-        }
-    }
-
-    for (int i = 0; i < pipe_count; i++) {
-        // Simple update strategy:
-        // clear a 2px strip where the pipe used to be then draw current pipe.
-        int clear_x = pipes[i].x + pipes[i].w;
-        if (!redraw_all && clear_x >= 0 && clear_x < DISPLAY_WIDTH) {
-            display_fill_rect((uint16_t)clear_x, 0, 2, DISPLAY_HEIGHT, COLOR_BLACK);
-        }
-        draw_pipe(pipes[i]);
-    }
-
-    display_fill_rect((uint16_t)bird_now.x, (uint16_t)bird_now.y, (uint16_t)bird_now.w, (uint16_t)bird_now.h, COLOR_YELLOW);
-    display_draw_score(2, 2, score_now, COLOR_WHITE, COLOR_BLACK);
+    return x + 6 * scale;
 }
 
-void display_render_menu(int high_score) {
-    display_fill_screen(COLOR_BLUE);
-    display_fill_rect(20, 20, 88, 16, COLOR_CYAN);
-    display_fill_rect(20, 50, 88, 16, COLOR_CYAN);
-    display_draw_score(24, 24, high_score, COLOR_BLACK, COLOR_CYAN);
-}
-
-void display_render_game_over(int score, int high_score) {
-    display_fill_screen(COLOR_RED);
-    display_fill_rect(10, 30, 108, 20, COLOR_BLACK);
-    display_draw_score(16, 36, score, COLOR_WHITE, COLOR_BLACK);
-    display_fill_rect(10, 60, 108, 20, COLOR_BLACK);
-    display_draw_score(16, 66, high_score, COLOR_GREEN, COLOR_BLACK);
-}
-
-void display_test(void) {
-    display_fill_screen(COLOR_BLACK);
-    display_fill_rect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT / 4, COLOR_RED);
-    display_fill_rect(0, DISPLAY_HEIGHT / 4, DISPLAY_WIDTH, DISPLAY_HEIGHT / 4, COLOR_GREEN);
-    display_fill_rect(0, DISPLAY_HEIGHT / 2, DISPLAY_WIDTH, DISPLAY_HEIGHT / 4, COLOR_BLUE);
-    display_fill_rect(0, (3 * DISPLAY_HEIGHT) / 4, DISPLAY_WIDTH, DISPLAY_HEIGHT / 4, COLOR_WHITE);
-
-    for (uint16_t i = 0; i < 40; i++) {
-        display_draw_pixel((uint16_t)(i * 4), (uint16_t)(i * 3), COLOR_YELLOW);
+uint16_t display_string(uint16_t x, uint16_t y, const char *s,
+                        uint16_t color, uint16_t bg, uint8_t scale)
+{
+    while (*s) {
+        x = display_char(x, y, *s++, color, bg, scale);
     }
-    display_draw_score(8, 8, 9341, COLOR_BLACK, COLOR_RED);
+    return x;
+}
+
+/* ──────────────────────── hardware test ──────────────────────────── */
+
+void display_test(void)
+{
+    display_fill(COLOR_RED);
+    sleep_ms(500);
+    display_fill(COLOR_GREEN);
+    sleep_ms(500);
+    display_fill(COLOR_BLUE);
+    sleep_ms(500);
+    display_fill(COLOR_WHITE);
+    sleep_ms(300);
+    display_fill(COLOR_BLACK);
+    display_string(20, 140, "Display OK", COLOR_WHITE, COLOR_BLACK, 2);
+    sleep_ms(1000);
 }

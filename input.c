@@ -1,85 +1,110 @@
+/*
+ * input.c — Adafruit analog joystick #512 driver.
+ *
+ * X/Y are read via ADC (12-bit, 0-4095).  The select button is
+ * active-low with an internal pull-up.  Deadzone and debounce are
+ * handled here so callers get clean, stable input.
+ */
+
 #include "input.h"
-
-#include <stdio.h>
-
-#include "hardware/adc.h"
-#include "hardware/gpio.h"
-#include "pico/stdlib.h"
-#include "pico/time.h"
-
 #include "pins.h"
 
-#define JOY_CENTER_COUNTS       2048.0f
-#define DEBOUNCE_MS             20
+#include "pico/stdlib.h"
+#include "hardware/adc.h"
+#include "hardware/gpio.h"
 
-static bool last_raw_button = false;
-static bool stable_button = false;
-static absolute_time_t last_change_time;
+#include <stdio.h>
+#include <stdlib.h>
 
-static uint16_t read_adc_channel(uint8_t ch) {
-    adc_select_input(ch);
+/* ── Configuration ── */
+
+/* ADC midpoint (12-bit). */
+#define ADC_MID           2048
+
+/* Threshold above/below midpoint to register a direction. */
+#define DEADZONE          400
+
+/* Button debounce: ignore presses closer than this (ms). */
+#define DEBOUNCE_MS       150
+
+/* ── Internal state ── */
+
+static bool     prev_btn_state  = false;
+static uint32_t last_press_time = 0;
+
+/* ── Helpers ── */
+
+static uint16_t read_adc_channel(uint8_t channel)
+{
+    adc_select_input(channel);
     return adc_read();
 }
 
-static float normalize_adc(uint16_t raw) {
-    float norm = ((float)raw - JOY_CENTER_COUNTS) / JOY_CENTER_COUNTS;
-    if (norm > 1.0f) norm = 1.0f;
-    if (norm < -1.0f) norm = -1.0f;
+/* ── Public API ── */
 
-    if (norm > -JOYSTICK_DEADZONE && norm < JOYSTICK_DEADZONE) {
-        norm = 0.0f;
-    }
-    return norm;
-}
-
-void input_init(void) {
+void input_init(void)
+{
     adc_init();
-    adc_gpio_init(JOY_ADC_X_PIN);
-    adc_gpio_init(JOY_ADC_Y_PIN);
 
-    gpio_init(JOY_BTN_PIN);
-    gpio_set_dir(JOY_BTN_PIN, GPIO_IN);
-    gpio_pull_up(JOY_BTN_PIN);
+    adc_gpio_init(PIN_JOY_X);  /* GP45 */
+    adc_gpio_init(PIN_JOY_Y);  /* GP44 */
 
-    last_raw_button = false;
-    stable_button = false;
-    last_change_time = get_absolute_time();
+    gpio_init(PIN_JOY_BTN);
+    gpio_set_dir(PIN_JOY_BTN, GPIO_IN);
+    gpio_pull_up(PIN_JOY_BTN);
 }
 
-void input_update(InputState* s) {
-    s->raw_x = read_adc_channel(JOY_ADC_X_CH);
-    s->raw_y = read_adc_channel(JOY_ADC_Y_CH);
-    s->norm_x = normalize_adc(s->raw_x);
-    s->norm_y = normalize_adc(s->raw_y);
+input_state_t input_read(void)
+{
+    input_state_t st;
 
-    bool raw_pressed = (gpio_get(JOY_BTN_PIN) == 0); // active-low
-    if (raw_pressed != last_raw_button) {
-        last_raw_button = raw_pressed;
-        last_change_time = get_absolute_time();
-    }
+    /* Read raw ADC values. */
+    st.raw_x = (int16_t)read_adc_channel(ADC_CHAN_X);
+    st.raw_y = (int16_t)read_adc_channel(ADC_CHAN_Y);
 
-    if (absolute_time_diff_us(last_change_time, get_absolute_time()) >= (DEBOUNCE_MS * 1000)) {
-        stable_button = raw_pressed;
-    }
+    /* Determine dominant direction using deadzone. */
+    int16_t dx = st.raw_x - ADC_MID;
+    int16_t dy = st.raw_y - ADC_MID;
 
-    static bool prev_stable = false;
-    s->button_pressed = stable_button;
-    s->button_just_pressed = (stable_button && !prev_stable);
-    prev_stable = stable_button;
-}
+    st.direction = JOY_NONE;
 
-void input_test(void) {
-    InputState s = {0};
-    absolute_time_t next_print = get_absolute_time();
-    while (true) {
-        input_update(&s);
-        if (time_reached(next_print)) {
-            next_print = delayed_by_ms(next_print, 100);
-            printf("JOY raw(x,y)=(%4u,%4u) norm=(%+.2f,%+.2f) btn=%d edge=%d\n",
-                   s.raw_x, s.raw_y, s.norm_x, s.norm_y,
-                   s.button_pressed ? 1 : 0,
-                   s.button_just_pressed ? 1 : 0);
+    /* Pick the larger-magnitude axis if beyond deadzone. */
+    if (abs(dx) > DEADZONE || abs(dy) > DEADZONE) {
+        if (abs(dx) >= abs(dy)) {
+            st.direction = (dx > 0) ? JOY_RIGHT : JOY_LEFT;
+        } else {
+            st.direction = (dy > 0) ? JOY_DOWN : JOY_UP;
         }
-        tight_loop_contents();
     }
+
+    /* Button: active-low, debounced edge. */
+    bool btn_raw = !gpio_get(PIN_JOY_BTN);
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+
+    st.button_held = btn_raw;
+    st.button_pressed = false;
+
+    if (btn_raw && !prev_btn_state) {
+        if ((now - last_press_time) >= DEBOUNCE_MS) {
+            st.button_pressed = true;
+            last_press_time = now;
+        }
+    }
+    prev_btn_state = btn_raw;
+
+    return st;
+}
+
+void input_test(void)
+{
+    printf("=== Joystick Test (5 seconds) ===\n");
+    uint32_t end = to_ms_since_boot(get_absolute_time()) + 5000;
+    while (to_ms_since_boot(get_absolute_time()) < end) {
+        input_state_t s = input_read();
+        printf("X=%4d  Y=%4d  dir=%d  btn=%d/%d\n",
+               s.raw_x, s.raw_y, s.direction,
+               s.button_pressed, s.button_held);
+        sleep_ms(100);
+    }
+    printf("=== Joystick Test Done ===\n");
 }
