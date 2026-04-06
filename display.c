@@ -1,8 +1,11 @@
 /*
- * display.c — ILI9341 TFT driver over SPI for the RP2350 Proton board.
+ * display.c — MSP2202 (ILI9341) TFT over SPI for the RP2350 Proton board.
  *
- * Implements correct ILI9341 init, window addressing, pixel/rect drawing,
- * and a minimal 5x7 bitmap font for score and text rendering.
+ * Target panel: LCD wiki SKU MSP2202 only — same electrical/SPI rules as vendor manual
+ * (D/C low = command, high = data; SPI mode 0).
+ * https://www.lcdwiki.com/2.2inch_SPI_Module_ILI9341_SKU:MSP2202
+ *
+ * Init, window set, fill, and 5x7 font for menu/games.
  */
 
 #include "display.h"
@@ -18,8 +21,27 @@
 
 static inline void cs_select(void)   { gpio_put(PIN_TFT_CS, 0); }
 static inline void cs_deselect(void) { gpio_put(PIN_TFT_CS, 1); }
-static inline void dc_command(void)  { gpio_put(PIN_TFT_DC, 0); }
-static inline void dc_data(void)     { gpio_put(PIN_TFT_DC, 1); }
+
+/* MSP2202 / ILI9341: D/C low = command, high = data. TFT_DC_INVERT flips if PCB inverts. */
+static inline void dc_command(void)
+{
+#if TFT_DC_INVERT
+    gpio_put(PIN_TFT_DC, 1);
+#else
+    gpio_put(PIN_TFT_DC, 0);
+#endif
+}
+
+static inline void dc_data(void)
+{
+#if TFT_DC_INVERT
+    gpio_put(PIN_TFT_DC, 0);
+#else
+    gpio_put(PIN_TFT_DC, 1);
+#endif
+}
+
+static void send_command_params(uint8_t cmd, const uint8_t *params, uint16_t len);
 
 static void spi_write_byte(uint8_t b)
 {
@@ -28,48 +50,62 @@ static void spi_write_byte(uint8_t b)
 
 static void send_command(uint8_t cmd)
 {
-    dc_command();
-    cs_select();
-    spi_write_byte(cmd);
-    cs_deselect();
+    send_command_params(cmd, NULL, 0);
 }
-
-static void send_data(const uint8_t *data, uint16_t len)
-{
-    dc_data();
-    cs_select();
-    spi_write_blocking(SPI_PORT, data, len);
-    cs_deselect();
-}
-
 
 static void send_command_params(uint8_t cmd, const uint8_t *params, uint16_t len)
 {
-    send_command(cmd);
-    if (len > 0) {
-        send_data(params, len);
+    /*
+     * Keep CS asserted across command + params.
+     * Some TFT controllers ignore params if CS toggles between bytes.
+     */
+    cs_select();
+    dc_command();
+    spi_write_byte(cmd);
+    if (len > 0 && params != NULL) {
+        dc_data();
+        spi_write_blocking(SPI_PORT, params, len);
     }
+    cs_deselect();
+}
+
+static void apply_spi_format(void)
+{
+#if TFT_SPI_MODE == 3
+    spi_set_format(SPI_PORT, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
+#else
+    spi_set_format(SPI_PORT, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+#endif
 }
 
 /* ──────────────────────── ILI9341 init sequence ──────────────────── */
 
 void display_init(void)
 {
-    /* Initialise SPI at target baud. */
-    spi_init(SPI_PORT, SPI_BAUD_HZ);
-    gpio_set_function(PIN_SPI_SCK,  GPIO_FUNC_SPI);
-    gpio_set_function(PIN_SPI_MOSI, GPIO_FUNC_SPI);
-
-    /* CS, DC, RST as manual GPIO. */
+    /* Match lab order: CS/DC/RST as GPIO, then mux SCK/MOSI to SPI, then spi_init. */
     gpio_init(PIN_TFT_CS);
     gpio_set_dir(PIN_TFT_CS, GPIO_OUT);
     gpio_put(PIN_TFT_CS, 1);
 
     gpio_init(PIN_TFT_DC);
     gpio_set_dir(PIN_TFT_DC, GPIO_OUT);
+    dc_command();
 
     gpio_init(PIN_TFT_RST);
     gpio_set_dir(PIN_TFT_RST, GPIO_OUT);
+
+    gpio_set_function(PIN_SPI_SCK,  GPIO_FUNC_SPI);
+    gpio_set_function(PIN_SPI_MOSI, GPIO_FUNC_SPI);
+
+    spi_init(SPI_PORT, SPI_BAUD_HZ);
+    apply_spi_format();
+
+#if PIN_TFT_BL >= 0
+    /* Some TFT modules require explicit backlight enable. */
+    gpio_init(PIN_TFT_BL);
+    gpio_set_dir(PIN_TFT_BL, GPIO_OUT);
+    gpio_put(PIN_TFT_BL, 1);
+#endif
 
     /* Hardware reset. */
     gpio_put(PIN_TFT_RST, 1);
@@ -79,110 +115,48 @@ void display_init(void)
     gpio_put(PIN_TFT_RST, 1);
     sleep_ms(120);
 
-    /* Software reset. */
-    send_command(0x01);
+    send_command(0x01);  /* SWRESET */
     sleep_ms(120);
 
-    /* Display OFF during configuration. */
-    send_command(0x28);
+    /*
+     * MSP2202 init sequence matched to known-working LCDWIKI sample code.
+     * Keep register order/values aligned with reference.
+     */
+    send_command_params(0xCF, (uint8_t[]){0x00, 0xD9, 0x30}, 3);
+    send_command_params(0xED, (uint8_t[]){0x64, 0x03, 0x12, 0x81}, 4);
+    send_command_params(0xE8, (uint8_t[]){0x85, 0x10, 0x7A}, 3);
+    send_command_params(0xCB, (uint8_t[]){0x39, 0x2C, 0x00, 0x34, 0x02}, 5);
+    send_command_params(0xF7, (uint8_t[]){0x20}, 1);
+    send_command_params(0xEA, (uint8_t[]){0x00, 0x00}, 2);
+    send_command_params(0xC0, (uint8_t[]){0x21}, 1);
+    send_command_params(0xC1, (uint8_t[]){0x12}, 1);
+    send_command_params(0xC5, (uint8_t[]){0x39, 0x37}, 2);
+    send_command_params(0xC7, (uint8_t[]){0xAB}, 1);
+    send_command_params(0x36, (uint8_t[]){0x48}, 1);
+    send_command_params(0x3A, (uint8_t[]){0x55}, 1);
+    send_command_params(0xB1, (uint8_t[]){0x00, 0x1B}, 2);
+    send_command_params(0xB6, (uint8_t[]){0x0A, 0xA2}, 2);
+    send_command_params(0xF2, (uint8_t[]){0x00}, 1);
+    send_command_params(0x26, (uint8_t[]){0x01}, 1);
+    send_command_params(0xE0, (uint8_t[]){
+        0x0F, 0x23, 0x1F, 0x0B, 0x0E, 0x08, 0x4B, 0xA8,
+        0x3B, 0x0A, 0x14, 0x06, 0x10, 0x09, 0x00
+    }, 15);
+    send_command_params(0xE1, (uint8_t[]){
+        0x00, 0x1C, 0x20, 0x04, 0x10, 0x08, 0x34, 0x47,
+        0x44, 0x05, 0x0B, 0x09, 0x2F, 0x36, 0x0F
+    }, 15);
 
-    /* Power Control A */
-    {
-        uint8_t p[] = {0x39, 0x2C, 0x00, 0x34, 0x02};
-        send_command_params(0xCB, p, sizeof(p));
-    }
-    /* Power Control B */
-    {
-        uint8_t p[] = {0x00, 0xC1, 0x30};
-        send_command_params(0xCF, p, sizeof(p));
-    }
-    /* Driver Timing A */
-    {
-        uint8_t p[] = {0x85, 0x00, 0x78};
-        send_command_params(0xE8, p, sizeof(p));
-    }
-    /* Driver Timing B */
-    {
-        uint8_t p[] = {0x00, 0x00};
-        send_command_params(0xEA, p, sizeof(p));
-    }
-    /* Power-on Sequence */
-    {
-        uint8_t p[] = {0x64, 0x03, 0x12, 0x81};
-        send_command_params(0xED, p, sizeof(p));
-    }
-    /* Pump ratio */
-    {
-        uint8_t p[] = {0x20};
-        send_command_params(0xF7, p, sizeof(p));
-    }
-    /* Power Control 1 — GVDD = 4.60V */
-    {
-        uint8_t p[] = {0x23};
-        send_command_params(0xC0, p, sizeof(p));
-    }
-    /* Power Control 2 */
-    {
-        uint8_t p[] = {0x10};
-        send_command_params(0xC1, p, sizeof(p));
-    }
-    /* VCOM Control 1 */
-    {
-        uint8_t p[] = {0x3E, 0x28};
-        send_command_params(0xC5, p, sizeof(p));
-    }
-    /* VCOM Control 2 */
-    {
-        uint8_t p[] = {0x86};
-        send_command_params(0xC7, p, sizeof(p));
-    }
-    /* Memory Access Control — portrait, RGB */
-    {
-        uint8_t p[] = {0x48};
-        send_command_params(0x36, p, sizeof(p));
-    }
-    /* Pixel format: 16 bit/pixel */
-    {
-        uint8_t p[] = {0x55};
-        send_command_params(0x3A, p, sizeof(p));
-    }
-    /* Frame Rate 70 Hz */
-    {
-        uint8_t p[] = {0x00, 0x1B};
-        send_command_params(0xB1, p, sizeof(p));
-    }
-    /* Display Function Control */
-    {
-        uint8_t p[] = {0x08, 0x82, 0x27};
-        send_command_params(0xB6, p, sizeof(p));
-    }
-    /* Gamma set — curve 1 */
-    {
-        uint8_t p[] = {0x01};
-        send_command_params(0x26, p, sizeof(p));
-    }
-    /* Positive Gamma */
-    {
-        uint8_t p[] = {
-            0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E,
-            0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00
-        };
-        send_command_params(0xE0, p, sizeof(p));
-    }
-    /* Negative Gamma */
-    {
-        uint8_t p[] = {
-            0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31,
-            0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F
-        };
-        send_command_params(0xE1, p, sizeof(p));
-    }
+    /* Full frame window as in sample init (240x320). */
+    send_command_params(0x2B, (uint8_t[]){0x00, 0x00, 0x01, 0x3F}, 4);
+    send_command_params(0x2A, (uint8_t[]){0x00, 0x00, 0x00, 0xEF}, 4);
 
-    /* Exit sleep and turn display on. */
-    send_command(0x11);  /* Sleep OUT */
+    send_command(0x11);  /* SLPOUT */
     sleep_ms(120);
-    send_command(0x29);  /* Display ON */
+    send_command(0x29);  /* DISPON */
     sleep_ms(20);
+    /* Keep MADCTL from init (0x48). Do not overwrite with 0x08 here — that clears
+     * MX and can mis-address GRAM on some builds; RP2350 SPI16 + 0x08 also hid bugs. */
 }
 
 /* ──────────────────────── drawing primitives ─────────────────────── */
@@ -190,33 +164,79 @@ void display_init(void)
 void display_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 {
     /* Column Address Set */
-    send_command(0x2A);
     {
         uint8_t p[] = {
             (uint8_t)(x0 >> 8), (uint8_t)(x0),
             (uint8_t)(x1 >> 8), (uint8_t)(x1)
         };
-        send_data(p, 4);
+        send_command_params(0x2A, p, sizeof(p));
     }
     /* Row Address Set */
-    send_command(0x2B);
     {
         uint8_t p[] = {
             (uint8_t)(y0 >> 8), (uint8_t)(y0),
             (uint8_t)(y1 >> 8), (uint8_t)(y1)
         };
-        send_data(p, 4);
+        send_command_params(0x2B, p, sizeof(p));
     }
     /* Memory Write */
     send_command(0x2C);
 }
 
+static void begin_memory_write(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+{
+    uint8_t p_col[] = {
+        (uint8_t)(x0 >> 8), (uint8_t)(x0),
+        (uint8_t)(x1 >> 8), (uint8_t)(x1)
+    };
+    uint8_t p_row[] = {
+        (uint8_t)(y0 >> 8), (uint8_t)(y0),
+        (uint8_t)(y1 >> 8), (uint8_t)(y1)
+    };
+
+    /*
+     * Keep CS low from CASET/RASET/RAMWR straight into pixel bytes.
+     * Some modules require this contiguous transaction framing.
+     */
+    cs_select();
+    dc_command();
+    spi_write_byte(0x2A);
+    dc_data();
+    spi_write_blocking(SPI_PORT, p_col, sizeof(p_col));
+
+    dc_command();
+    spi_write_byte(0x2B);
+    dc_data();
+    spi_write_blocking(SPI_PORT, p_row, sizeof(p_row));
+
+    dc_command();
+    spi_write_byte(0x2C);
+    dc_data();
+}
+
+/* ILI9341 expects two 8-bit writes per RGB565 pixel (MSB first). Stay in SPI 8-bit mode. */
+static void write_pixels_rgb565_8(uint16_t color, uint32_t num_pixels)
+{
+    uint8_t hi = (uint8_t)(color >> 8);
+    uint8_t lo = (uint8_t)color;
+    uint8_t buf[128];
+    while (num_pixels > 0) {
+        uint32_t chunk = num_pixels > 64 ? 64 : num_pixels;
+        for (uint32_t i = 0; i < chunk; i++) {
+            buf[i * 2]     = hi;
+            buf[i * 2 + 1] = lo;
+        }
+        spi_write_blocking(SPI_PORT, buf, (size_t)(chunk * 2));
+        num_pixels -= chunk;
+    }
+}
+
 void display_pixel(uint16_t x, uint16_t y, uint16_t color)
 {
     if (x >= TFT_WIDTH || y >= TFT_HEIGHT) return;
-    display_set_window(x, y, x, y);
-    uint8_t d[] = {(uint8_t)(color >> 8), (uint8_t)(color)};
-    send_data(d, 2);
+    begin_memory_write(x, y, x, y);
+    write_pixels_rgb565_8(color, 1);
+    cs_deselect();
 }
 
 void display_fill(uint16_t color)
@@ -231,21 +251,16 @@ void display_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
     if (x + w > TFT_WIDTH)  w = TFT_WIDTH  - x;
     if (y + h > TFT_HEIGHT) h = TFT_HEIGHT - y;
 
-    display_set_window(x, y, x + w - 1, y + h - 1);
+    begin_memory_write(x, y, x + w - 1, y + h - 1);
 
     uint8_t hi = (uint8_t)(color >> 8);
-    uint8_t lo = (uint8_t)(color);
-
-    /* Send in row-sized bursts to keep stack usage bounded. */
+    uint8_t lo = (uint8_t)color;
     uint8_t row_buf[TFT_WIDTH * 2];
-    uint16_t row_bytes = w * 2;
-    for (uint16_t i = 0; i < row_bytes; i += 2) {
+    uint32_t row_bytes = (uint32_t)w * 2;
+    for (uint32_t i = 0; i < row_bytes; i += 2) {
         row_buf[i]     = hi;
         row_buf[i + 1] = lo;
     }
-
-    dc_data();
-    cs_select();
     for (uint16_t r = 0; r < h; r++) {
         spi_write_blocking(SPI_PORT, row_buf, row_bytes);
     }

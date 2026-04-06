@@ -88,6 +88,8 @@ int main(void)
 
     /* Initialise hardware drivers. */
     display_init();
+    /* Early panel sanity test before other subsystems start. */
+    display_test();
     input_init();
     audio_init();
     eeprom_init();
