@@ -32,6 +32,8 @@
 #define SPI_PORT        spi1
 /* If the panel glitches, try 4_000_000 or 1_000_000. */
 #define SPI_BAUD_HZ     4000000
+/* Bring-up fallback: 1 = software SPI bit-bang on SCK/MOSI pins. */
+#define TFT_USE_SOFT_SPI 0
 
 /*
  * SPI mode: MSP2202 manual — SPI0, CPOL=0, CPHA=0 (RP2040/2350 “mode 0”).

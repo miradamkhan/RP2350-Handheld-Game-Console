@@ -43,9 +43,31 @@ static inline void dc_data(void)
 
 static void send_command_params(uint8_t cmd, const uint8_t *params, uint16_t len);
 
+static inline void soft_spi_write_byte(uint8_t b)
+{
+    for (uint8_t mask = 0x80; mask != 0; mask >>= 1) {
+        gpio_put(PIN_SPI_MOSI, (b & mask) ? 1 : 0);
+        gpio_put(PIN_SPI_SCK, 1);
+        sleep_us(1);
+        gpio_put(PIN_SPI_SCK, 0);
+        sleep_us(1);
+    }
+}
+
+static void lcd_write_bytes(const uint8_t *data, size_t len)
+{
+#if TFT_USE_SOFT_SPI
+    for (size_t i = 0; i < len; i++) {
+        soft_spi_write_byte(data[i]);
+    }
+#else
+    spi_write_blocking(SPI_PORT, data, len);
+#endif
+}
+
 static void spi_write_byte(uint8_t b)
 {
-    spi_write_blocking(SPI_PORT, &b, 1);
+    lcd_write_bytes(&b, 1);
 }
 
 static void send_command(uint8_t cmd)
@@ -64,17 +86,21 @@ static void send_command_params(uint8_t cmd, const uint8_t *params, uint16_t len
     spi_write_byte(cmd);
     if (len > 0 && params != NULL) {
         dc_data();
-        spi_write_blocking(SPI_PORT, params, len);
+        lcd_write_bytes(params, len);
     }
     cs_deselect();
 }
 
 static void apply_spi_format(void)
 {
+#if TFT_USE_SOFT_SPI
+    /* bit-banged SPI uses explicit GPIO edges */
+#else
 #if TFT_SPI_MODE == 3
     spi_set_format(SPI_PORT, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
 #else
     spi_set_format(SPI_PORT, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+#endif
 #endif
 }
 
@@ -94,10 +120,19 @@ void display_init(void)
     gpio_init(PIN_TFT_RST);
     gpio_set_dir(PIN_TFT_RST, GPIO_OUT);
 
+    /* SPI pins */
+#if TFT_USE_SOFT_SPI
+    gpio_set_function(PIN_SPI_SCK, GPIO_FUNC_SIO);
+    gpio_set_function(PIN_SPI_MOSI, GPIO_FUNC_SIO);
+    gpio_set_dir(PIN_SPI_SCK, GPIO_OUT);
+    gpio_set_dir(PIN_SPI_MOSI, GPIO_OUT);
+    gpio_put(PIN_SPI_SCK, 0);
+    gpio_put(PIN_SPI_MOSI, 0);
+#else
     gpio_set_function(PIN_SPI_SCK,  GPIO_FUNC_SPI);
     gpio_set_function(PIN_SPI_MOSI, GPIO_FUNC_SPI);
-
     spi_init(SPI_PORT, SPI_BAUD_HZ);
+#endif
     apply_spi_format();
 
 #if PIN_TFT_BL >= 0
@@ -202,12 +237,12 @@ static void begin_memory_write(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y
     dc_command();
     spi_write_byte(0x2A);
     dc_data();
-    spi_write_blocking(SPI_PORT, p_col, sizeof(p_col));
+    lcd_write_bytes(p_col, sizeof(p_col));
 
     dc_command();
     spi_write_byte(0x2B);
     dc_data();
-    spi_write_blocking(SPI_PORT, p_row, sizeof(p_row));
+    lcd_write_bytes(p_row, sizeof(p_row));
 
     dc_command();
     spi_write_byte(0x2C);
@@ -226,7 +261,7 @@ static void write_pixels_rgb565_8(uint16_t color, uint32_t num_pixels)
             buf[i * 2]     = hi;
             buf[i * 2 + 1] = lo;
         }
-        spi_write_blocking(SPI_PORT, buf, (size_t)(chunk * 2));
+        lcd_write_bytes(buf, (size_t)(chunk * 2));
         num_pixels -= chunk;
     }
 }
@@ -262,7 +297,7 @@ void display_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
         row_buf[i + 1] = lo;
     }
     for (uint16_t r = 0; r < h; r++) {
-        spi_write_blocking(SPI_PORT, row_buf, row_bytes);
+        lcd_write_bytes(row_buf, row_bytes);
     }
     cs_deselect();
 }
