@@ -167,7 +167,8 @@ void display_init(void)
     send_command_params(0xC1, (uint8_t[]){0x12}, 1);
     send_command_params(0xC5, (uint8_t[]){0x39, 0x37}, 2);
     send_command_params(0xC7, (uint8_t[]){0xAB}, 1);
-    send_command_params(0x36, (uint8_t[]){0x48}, 1);
+    /* MADCTL: BGR colour order, no axis mirroring. */
+    send_command_params(0x36, (uint8_t[]){0x08}, 1);
     send_command_params(0x3A, (uint8_t[]){0x55}, 1);
     send_command_params(0xB1, (uint8_t[]){0x00, 0x1B}, 2);
     send_command_params(0xB6, (uint8_t[]){0x0A, 0xA2}, 2);
@@ -190,8 +191,7 @@ void display_init(void)
     sleep_ms(120);
     send_command(0x29);  /* DISPON */
     sleep_ms(20);
-    /* Keep MADCTL from init (0x48). Do not overwrite with 0x08 here — that clears
-     * MX and can mis-address GRAM on some builds; RP2350 SPI16 + 0x08 also hid bugs. */
+    /* Keep MADCTL from init. */
 }
 
 /* ──────────────────────── drawing primitives ─────────────────────── */

@@ -173,7 +173,9 @@ static uint8_t clear_lines(tetris_game_t *g)
 static uint16_t compute_gravity(uint8_t level)
 {
     int val = 30 - (int)level * 3;
-    return (uint16_t)(val < 2 ? 2 : val);
+    int base = (val < 2 ? 2 : val);
+    /* Run gravity at 2x speed by halving the tick interval. */
+    return (uint16_t)((base + 1) / 2);
 }
 
 static void update_score(tetris_game_t *g, uint8_t lines)
@@ -198,7 +200,7 @@ static void start_game(tetris_game_t *g)
     g->score            = 0;
     g->lines_cleared    = 0;
     g->level            = 0;
-    g->gravity_interval = 30;
+    g->gravity_interval = compute_gravity(0);
     g->gravity_counter  = 0;
     g->lock_counter     = 0;
     g->state            = TETRIS_STATE_PLAYING;

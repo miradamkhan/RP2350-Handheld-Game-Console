@@ -18,14 +18,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* ── Layout constants (pixels) ── */
-
-#define BLOCK_SZ     12
-#define BOARD_PX_X    8                           /* board left edge      */
-#define BOARD_PX_Y   20                           /* board top edge       */
-#define INFO_X      138                           /* info-panel left edge */
-#define PREVIEW_SZ    8                           /* next-piece block px  */
-
 /* ── Timing ── */
 
 #define FRAME_MS        33   /* ~30 FPS */
@@ -55,6 +47,34 @@ static void draw_number(uint16_t x, uint16_t y, uint32_t val,
     }
     buf[i] = '\0';
     display_string(x, y, buf, color, bg, scale);
+}
+
+static uint16_t board_block_size(void)
+{
+    uint16_t by_h = (uint16_t)(TFT_HEIGHT / BOARD_H);
+    uint16_t by_w = (uint16_t)(TFT_WIDTH / BOARD_W);
+    uint16_t blk = by_h < by_w ? by_h : by_w;
+    return (blk == 0) ? 1 : blk;
+}
+
+static uint16_t board_px_w(uint16_t block_sz)
+{
+    return (uint16_t)(BOARD_W * block_sz);
+}
+
+static uint16_t board_px_h(uint16_t block_sz)
+{
+    return (uint16_t)(BOARD_H * block_sz);
+}
+
+static uint16_t board_px_x(uint16_t board_w)
+{
+    return (uint16_t)((TFT_WIDTH - board_w) / 2);
+}
+
+static uint16_t board_px_y(uint16_t board_h)
+{
+    return (uint16_t)((TFT_HEIGHT - board_h) / 2);
 }
 
 /* ────────────────────────── input mapping ─────────────────────────── */
@@ -112,6 +132,12 @@ static uint8_t map_input(const input_state_t *in, tetris_state_t state)
 
 static void draw_board(const tetris_game_t *g)
 {
+    uint16_t block_sz = board_block_size();
+    uint16_t bw = board_px_w(block_sz);
+    uint16_t bh = board_px_h(block_sz);
+    uint16_t x0 = board_px_x(bw);
+    uint16_t y0 = board_px_y(bh);
+
     for (int r = 0; r < BOARD_H; r++) {
         for (int c = 0; c < BOARD_W; c++) {
             uint16_t color = COLOR_BLACK;
@@ -130,81 +156,31 @@ static void draw_board(const tetris_game_t *g)
                 }
             }
 
-            uint16_t px = BOARD_PX_X + (uint16_t)c * BLOCK_SZ;
-            uint16_t py = BOARD_PX_Y + (uint16_t)r * BLOCK_SZ;
-            display_fill_rect(px, py, BLOCK_SZ - 1, BLOCK_SZ - 1, color);
+            uint16_t px = x0 + (uint16_t)c * block_sz;
+            uint16_t py = y0 + (uint16_t)r * block_sz;
+            display_fill_rect(px, py, block_sz - 1, block_sz - 1, color);
         }
     }
 }
 
 static void draw_board_border(void)
 {
-    uint16_t bw = (uint16_t)(BOARD_W * BLOCK_SZ);
-    uint16_t bh = (uint16_t)(BOARD_H * BLOCK_SZ);
-    uint16_t x0 = BOARD_PX_X - 1;
-    uint16_t y0 = BOARD_PX_Y - 1;
+    uint16_t block_sz = board_block_size();
+    uint16_t bw = board_px_w(block_sz);
+    uint16_t bh = board_px_h(block_sz);
+    uint16_t x0 = board_px_x(bw) - 1;
+    uint16_t y0 = board_px_y(bh) - 1;
     display_fill_rect(x0, y0, bw + 2, 1, COLOR_WHITE);         /* top    */
     display_fill_rect(x0, y0 + bh + 1, bw + 2, 1, COLOR_WHITE);/* bottom */
     display_fill_rect(x0, y0, 1, bh + 2, COLOR_WHITE);         /* left   */
     display_fill_rect(x0 + bw + 1, y0, 1, bh + 2, COLOR_WHITE);/* right  */
 }
 
-static void draw_info_panel(const tetris_game_t *g)
-{
-    uint16_t y = BOARD_PX_Y;
-    uint16_t clr_w = 96;  /* width to clear for number fields */
-
-    display_string(INFO_X, y, "SCORE", COLOR_GRAY, COLOR_BLACK, 1);
-    y += 10;
-    display_fill_rect(INFO_X, y, clr_w, 9, COLOR_BLACK);
-    draw_number(INFO_X, y, g->score, COLOR_WHITE, COLOR_BLACK, 1);
-
-    y += 18;
-    display_string(INFO_X, y, "HIGH", COLOR_GRAY, COLOR_BLACK, 1);
-    y += 10;
-    display_fill_rect(INFO_X, y, clr_w, 9, COLOR_BLACK);
-    draw_number(INFO_X, y, g->high_score, COLOR_YELLOW, COLOR_BLACK, 1);
-
-    y += 18;
-    display_string(INFO_X, y, "LEVEL", COLOR_GRAY, COLOR_BLACK, 1);
-    y += 10;
-    display_fill_rect(INFO_X, y, clr_w, 9, COLOR_BLACK);
-    draw_number(INFO_X, y, (uint32_t)(g->level + 1), COLOR_GREEN, COLOR_BLACK, 1);
-
-    y += 18;
-    display_string(INFO_X, y, "LINES", COLOR_GRAY, COLOR_BLACK, 1);
-    y += 10;
-    display_fill_rect(INFO_X, y, clr_w, 9, COLOR_BLACK);
-    draw_number(INFO_X, y, (uint32_t)g->lines_cleared, COLOR_CYAN, COLOR_BLACK, 1);
-
-    /* Next piece preview */
-    y += 20;
-    display_string(INFO_X, y, "NEXT", COLOR_GRAY, COLOR_BLACK, 1);
-    y += 10;
-    uint16_t px0 = INFO_X;
-    /* Clear preview area */
-    display_fill_rect(px0, y, TETRO_SIZE * PREVIEW_SZ,
-                      TETRO_SIZE * PREVIEW_SZ, COLOR_BLACK);
-    for (int r = 0; r < TETRO_SIZE; r++) {
-        for (int c = 0; c < TETRO_SIZE; c++) {
-            if (TETROMINO_SHAPES[g->next.type][0][r][c]) {
-                display_fill_rect(px0 + (uint16_t)c * PREVIEW_SZ,
-                                  y   + (uint16_t)r * PREVIEW_SZ,
-                                  PREVIEW_SZ - 1, PREVIEW_SZ - 1,
-                                  PIECE_COLORS[g->next.type]);
-            }
-        }
-    }
-}
-
-
-
 static void draw_playing_full(const tetris_game_t *g)
 {
     display_fill(COLOR_BLACK);
     draw_board_border();
     draw_board(g);
-    draw_info_panel(g);
 }
 
 static void draw_paused(void)
@@ -307,7 +283,6 @@ void tetris_run(void)
             }
         } else if (cur == TETRIS_STATE_PLAYING) {
             if (g.board_dirty)  draw_board(&g);
-            if (g.score_dirty)  draw_info_panel(&g);
         }
 
         /* Clear dirty flags after rendering. */
