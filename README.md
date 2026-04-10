@@ -1,146 +1,110 @@
-# 🎮 RP2350 Flappy Bird  
-### ECE 362 – Microprocessor Systems and Interfacing Final Project
+# RP2350 Handheld Game Console
 
-Embedded Flappy Bird implementation for an RP2350-based Proton board using Pico SDK style C. This project integrates real-time graphics, analog input, audio output, and persistent storage into a handheld gaming system.
+ECE 362 final project firmware and hardware files for a handheld game console built on the RP2350 Proton board.  
+The current codebase includes a game-selection menu and three playable games: Tetris, 2048, and Space Invaders.
 
----
+This README explains how to download the project, build it as-is, flash it, and test the hardware.
 
-## 🚀 Features
+## Project Contents
 
-- 🖥️ **SPI TFT Graphics** (ILI9341 display)
-- 🎮 **Analog Joystick Input** (ADC + GPIO button)
-- 🔊 **PWM Audio Output** (non-blocking sound effects)
-- 💾 **EEPROM High Score Storage** (I2C)
-- ⏱️ **Fixed Timestep Game Loop**
-- 🧠 Game states:
-  - MENU
-  - PLAYING
-  - GAME OVER
+- `src/`: Main firmware source (menu, games, drivers)
+- `platformio.ini`: PlatformIO environment and build filter
+- `Project_PCB/`: KiCad schematic and PCB files
+- `Gameboy_Project_PCB.zip`: Packaged PCB design files
 
----
+## Hardware Diagrams
 
-## 📁 Project Structure
-main.c # system init, game loop, state handling
-game.c / game.h # Flappy Bird physics, pipes, scoring, collisions
-display.c / display.h# ILI9341 SPI driver + rendering helpers
-input.c / input.h # joystick ADC + button logic
-audio.c / audio.h # PWM tone generation (non-blocking)
-eeprom.c / eeprom.h # 24AA32AF I2C read/write logic
-pins.h # complete GPIO mapping
-CMakeLists.txt # Pico SDK build configuration
+### Schematic
+![Schematic diagram](docs/images/schematic.png)
 
+### PCB Layout
+![PCB layout](docs/images/pcb-layout.png)
 
----
+## Requirements
 
-## 🔌 Pin Map (Final Configuration)
+- Windows, macOS, or Linux
+- [VS Code](https://code.visualstudio.com/) with [PlatformIO IDE](https://platformio.org/install/ide?install=vscode), or PlatformIO Core CLI
+- USB connection to the RP2350 board
+- Debug/upload setup expected by this repo:
+  - `picoprobe` upload/debug workflow (configured in `platformio.ini`)
 
-### 🟦 SPI Display (ILI9341 TFT)
-- SCK → GPIO14  
-- MOSI → GPIO15  
-- CS → GPIO13  
-- DC → GPIO12  
-- RST → GPIO11  
+## 1) Download the Project
 
----
-
-### 🟩 I2C EEPROM (24AA32AF)
-- SDA → GPIO4  
-- SCL → GPIO5  
-- Address: `0x50` (A0–A2 tied low)
-
----
-
-### 🟨 Joystick (Analog + Button)
-- X → GPIO45 (ADC)  
-- Y → GPIO44 (ADC)  
-- BTN → GPIO6 (active LOW)
-
----
-
-### 🟧 Audio (PWM Speaker)
-- PWM → GPIO30  
-
----
-
-### 🟥 Debug
-- LED → GPIO17  
-
----
-
-### 🟪 Free GPIO (Available)
-- GPIO7, GPIO8, GPIO9, GPIO10, GPIO18, GPIO19  
-
----
-
-## ⚙️ Hardware Notes
-
-- TFT module: **MSP2202 (ILI9341)**  
-- Display mode: **320x240 landscape**
-- EEPROM:
-  - Size: 4KB (32 Kbit)
-  - Page size: 32 bytes
-  - Page-safe write handling implemented
-
----
-
-## 🛠 Build Instructions
-
-Ensure Pico SDK is installed and environment variable is set:
+### Option A: Clone with Git
 
 ```bash
-export PICO_SDK_PATH=/path/to/pico-sdk
-mkdir build
-cd build
-cmake ..
-cmake --build .
+git clone <repo-url>
+cd RP2350-Handheld-Game-Console
+```
 
-🧪 Hardware Bring-Up Tests
+### Option B: Download ZIP
 
-Available test functions:
+1. Download the repository ZIP from GitHub.
+2. Extract it.
+3. Open the extracted folder in VS Code.
 
-display_test() → verifies TFT rendering
-input_test() → prints joystick ADC + button values (UART)
-audio_test() → plays PWM tones
-eeprom_test() → verifies EEPROM read/write
+## 2) Build the Firmware
 
-Enable in main.c:
-#define RUN_HW_TESTS 1
-🎮 Gameplay
-Press joystick button to:
-Start game
-Jump
-Restart after game over
-Mechanics:
-Gravity + jump velocity physics
-Pipes scroll horizontally
-Score increases when passing pipes
-Collision ends the game
-High Score:
-Loaded at startup
-Saved only when exceeded
-Stored in EEPROM (persists across resets)
-✅ ECE 362 Demo Checklist
-✔ SPI → Display renders graphics and UI (display_test)
-✔ ADC + GPIO → Joystick input works (input_test)
-✔ PWM → Audio output functional (audio_test)
-✔ I2C → EEPROM read/write verified (eeprom_test)
-✔ Full system demo:
-Game runs smoothly
-Input is responsive
-Audio works
-High score persists
-🧠 Design Highlights
-Modular embedded C architecture
-Non-blocking gameplay loop
-Separation of hardware drivers and game logic
-Centralized pin configuration via pins.h
-🚀 Future Improvements
-Additional games (e.g., Tetris)
-Improved graphics and animations
-Battery-powered handheld version
-Custom PCB enclosure refinement
-👥 Team Members
-Enio Hysa
-Mir Adam Khan
-Abdul Malik
-Dixon Wagner
+From the project root:
+
+```bash
+pio run -e proton
+```
+
+If the build succeeds, PlatformIO will generate firmware in `.pio/build/proton/`.
+
+## 3) Flash to the Board
+
+This project is configured for `picoprobe` upload:
+
+```bash
+pio run -e proton -t upload
+```
+
+If upload fails, verify:
+
+- `picoprobe` is connected and detected
+- The target board is powered
+- Wiring and debug pins match your setup
+
+## 4) Optional Serial Monitor
+
+To open UART output:
+
+```bash
+pio device monitor -b 115200
+```
+
+## 5) Test the Project on Hardware
+
+After flashing, the expected behavior is:
+
+1. Boot splash appears.
+2. Game menu appears with three options:
+   - TETRIS
+   - 2048
+   - SPACE INVADERS
+3. Joystick up/down changes the selected game.
+4. Joystick button launches the selected game.
+5. Exiting a game returns to the menu.
+6. Leaderboard/high scores persist through EEPROM across resets.
+
+### Input/Output Wiring Reference
+
+- TFT SPI (ILI9341): `GPIO14` SCK, `GPIO15` MOSI, `GPIO13` CS, `GPIO12` DC, `GPIO11` RST
+- EEPROM I2C: `GPIO4` SDA, `GPIO5` SCL
+- Joystick ADC: `GPIO45` X, `GPIO44` Y, `GPIO6` button
+- Extra buttons: `GPIO21` menu, `GPIO26` back
+- Speaker PWM: `GPIO30`
+
+## Notes on Scope
+
+This repository is intentionally staying on the current feature set and game implementations.  
+Future updates are expected to be small improvements (stability, polish, and maintainability), not major game rewrites.
+
+## Team
+
+- Enio Hysa
+- Mir Adam Khan
+- Abdul Malik
+- Dixon Wagner
