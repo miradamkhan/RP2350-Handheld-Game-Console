@@ -23,6 +23,10 @@
 #define FRAME_MS        33   /* ~30 FPS */
 #define DAS_DELAY_MS   170   /* auto-repeat initial delay */
 #define DAS_REPEAT_MS   50   /* auto-repeat interval      */
+/* ── Layout ── */
+#define UI_MARGIN       8
+#define INFO_PANEL_W    76
+#define PREVIEW_SZ      7
 
 /* ── Auto-repeat state ── */
 
@@ -52,7 +56,8 @@ static void draw_number(uint16_t x, uint16_t y, uint32_t val,
 static uint16_t board_block_size(void)
 {
     uint16_t by_h = (uint16_t)(TFT_HEIGHT / BOARD_H);
-    uint16_t by_w = (uint16_t)(TFT_WIDTH / BOARD_W);
+    uint16_t board_area_w = (uint16_t)(TFT_WIDTH - (UI_MARGIN * 3) - INFO_PANEL_W);
+    uint16_t by_w = (uint16_t)(board_area_w / BOARD_W);
     uint16_t blk = by_h < by_w ? by_h : by_w;
     return (blk == 0) ? 1 : blk;
 }
@@ -69,12 +74,18 @@ static uint16_t board_px_h(uint16_t block_sz)
 
 static uint16_t board_px_x(uint16_t board_w)
 {
-    return (uint16_t)((TFT_WIDTH - board_w) / 2);
+    (void)board_w;
+    return UI_MARGIN;
 }
 
 static uint16_t board_px_y(uint16_t board_h)
 {
     return (uint16_t)((TFT_HEIGHT - board_h) / 2);
+}
+
+static uint16_t info_x(uint16_t board_w)
+{
+    return (uint16_t)(board_px_x(board_w) + board_w + UI_MARGIN);
 }
 
 /* ────────────────────────── input mapping ─────────────────────────── */
@@ -108,8 +119,13 @@ static uint8_t map_input(const input_state_t *in, tetris_state_t state)
         actions |= TETRIS_ACTION_DOWN;
     }
 
-    /* Pause on joystick-up edge */
+    /* Hard drop on up edge. */
     if (dir == JOY_UP && s_prev_dir != JOY_UP) {
+        actions |= TETRIS_ACTION_HARD_DROP;
+    }
+
+    /* Pause on dedicated menu button edge (GP21). */
+    if (in->menu_pressed) {
         actions |= TETRIS_ACTION_PAUSE;
     }
 
@@ -176,11 +192,59 @@ static void draw_board_border(void)
     display_fill_rect(x0 + bw + 1, y0, 1, bh + 2, COLOR_WHITE);/* right  */
 }
 
+static void draw_info_panel(const tetris_game_t *g)
+{
+    uint16_t block_sz = board_block_size();
+    uint16_t bw = board_px_w(block_sz);
+    uint16_t x = info_x(bw);
+    uint16_t y = board_px_y(board_px_h(block_sz));
+    uint16_t clr_w = (uint16_t)(INFO_PANEL_W - 2);
+
+    display_string(x, y, "SCORE", COLOR_GRAY, COLOR_BLACK, 1);
+    y += 10;
+    display_fill_rect(x, y, clr_w, 9, COLOR_BLACK);
+    draw_number(x, y, g->score, COLOR_WHITE, COLOR_BLACK, 1);
+
+    y += 18;
+    display_string(x, y, "HIGH", COLOR_GRAY, COLOR_BLACK, 1);
+    y += 10;
+    display_fill_rect(x, y, clr_w, 9, COLOR_BLACK);
+    draw_number(x, y, g->high_score, COLOR_YELLOW, COLOR_BLACK, 1);
+
+    y += 18;
+    display_string(x, y, "LEVEL", COLOR_GRAY, COLOR_BLACK, 1);
+    y += 10;
+    display_fill_rect(x, y, clr_w, 9, COLOR_BLACK);
+    draw_number(x, y, (uint32_t)(g->level + 1), COLOR_GREEN, COLOR_BLACK, 1);
+
+    y += 18;
+    display_string(x, y, "LINES", COLOR_GRAY, COLOR_BLACK, 1);
+    y += 10;
+    display_fill_rect(x, y, clr_w, 9, COLOR_BLACK);
+    draw_number(x, y, (uint32_t)g->lines_cleared, COLOR_CYAN, COLOR_BLACK, 1);
+
+    y += 20;
+    display_string(x, y, "NEXT", COLOR_GRAY, COLOR_BLACK, 1);
+    y += 10;
+    display_fill_rect(x, y, TETRO_SIZE * PREVIEW_SZ, TETRO_SIZE * PREVIEW_SZ, COLOR_BLACK);
+    for (int r = 0; r < TETRO_SIZE; r++) {
+        for (int c = 0; c < TETRO_SIZE; c++) {
+            if (TETROMINO_SHAPES[g->next.type][0][r][c]) {
+                display_fill_rect(x + (uint16_t)c * PREVIEW_SZ,
+                                  y + (uint16_t)r * PREVIEW_SZ,
+                                  PREVIEW_SZ - 1, PREVIEW_SZ - 1,
+                                  PIECE_COLORS[g->next.type]);
+            }
+        }
+    }
+}
+
 static void draw_playing_full(const tetris_game_t *g)
 {
     display_fill(COLOR_BLACK);
     draw_board_border();
     draw_board(g);
+    draw_info_panel(g);
 }
 
 static void draw_paused(void)
@@ -202,7 +266,7 @@ static void draw_game_over(const tetris_game_t *g)
     display_string(24, 200, "HIGH", COLOR_GRAY, COLOR_BLACK, 2);
     draw_number(24, 228, g->high_score, COLOR_YELLOW, COLOR_BLACK, 2);
 
-    display_string(18, 290, "Press Button", COLOR_GRAY, COLOR_BLACK, 1);
+    display_string(20, 290, "BACK TO MENU", COLOR_GRAY, COLOR_BLACK, 1);
 }
 
 /* ────────────────────────── audio events ──────────────────────────── */
@@ -258,6 +322,10 @@ void tetris_run(void)
 
         /* 1. Read input */
         input_state_t in = input_read();
+        if (in.back_pressed) {
+            eeprom_write_high_score(EEPROM_ADDR_TETRIS_HS, g.high_score);
+            return;
+        }
         uint8_t actions = map_input(&in, g.state);
 
         /* 2. Advance game logic */
@@ -283,6 +351,7 @@ void tetris_run(void)
             }
         } else if (cur == TETRIS_STATE_PLAYING) {
             if (g.board_dirty)  draw_board(&g);
+            if (g.score_dirty)  draw_info_panel(&g);
         }
 
         /* Clear dirty flags after rendering. */

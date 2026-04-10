@@ -25,6 +25,10 @@ typedef struct {
     joy_dir_t direction;      /* dominant axis after deadzone            */
     bool      button_pressed; /* true on the *edge* press this poll     */
     bool      button_held;    /* true while the button is held down     */
+    bool      menu_pressed;   /* true on GP21 edge press this poll       */
+    bool      menu_held;      /* true while GP21 is held down            */
+    bool      back_pressed;   /* true on GP26 edge press this poll       */
+    bool      back_held;      /* true while GP26 is held down            */
     int16_t   raw_x;          /* 0 ... 4095 straight from ADC           */
     int16_t   raw_y;          /* 0 ... 4095 straight from ADC           */
 } input_state_t;

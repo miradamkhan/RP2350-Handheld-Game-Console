@@ -19,6 +19,8 @@
 /* EEPROM address slots for each game's high score. */
 #define EEPROM_ADDR_TETRIS_HS   0x0000
 #define EEPROM_ADDR_FLAPPY_HS   0x0010
+#define EEPROM_ADDR_INVADERS_HS 0x0020
+#define EEPROM_ADDR_2048_HS     0x0030
 
 /* Initialise I2C bus for the EEPROM. */
 void eeprom_init(void);

@@ -278,6 +278,32 @@ tetris_state_t tetris_game_tick(tetris_game_t *g, uint8_t actions)
             }
         }
 
+        /* Hard drop: move to floor instantly, then lock this frame. */
+        if (actions & TETRIS_ACTION_HARD_DROP) {
+            while (!check_collision(g, g->current.type, g->current.rotation,
+                                    g->current.x, g->current.y + 1)) {
+                g->current.y++;
+            }
+
+            lock_piece(g);
+            g->piece_locked_now = true;
+            g->lock_counter = 0;
+            g->gravity_counter = 0;
+
+            uint8_t lns = clear_lines(g);
+            if (lns > 0) {
+                g->lines_cleared_now = lns;
+                update_score(g, lns);
+            }
+            g->board_dirty = true;
+
+            if (!spawn_piece(g)) {
+                g->state = TETRIS_STATE_GAME_OVER;
+                g->state_changed = true;
+            }
+            break;
+        }
+
         /* Gravity */
         bool soft_drop = (actions & TETRIS_ACTION_DOWN) != 0;
         g->gravity_counter++;

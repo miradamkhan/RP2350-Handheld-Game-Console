@@ -16,8 +16,10 @@ add_executable(rp2350_game_console
     eeprom.c
     tetris_game.c
     tetris_render.c
+    game2048.c
     flappy_game.c
     flappy_render.c
+    invaders.c
 )
 
 target_include_directories(rp2350_game_console PRIVATE

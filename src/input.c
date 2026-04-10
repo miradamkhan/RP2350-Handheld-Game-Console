@@ -30,7 +30,11 @@
 /* ── Internal state ── */
 
 static bool     prev_btn_state  = false;
+static bool     prev_menu_state = false;
+static bool     prev_back_state = false;
 static uint32_t last_press_time = 0;
+static uint32_t last_menu_time  = 0;
+static uint32_t last_back_time  = 0;
 
 /* ── Helpers ── */
 
@@ -52,6 +56,14 @@ void input_init(void)
     gpio_init(PIN_JOY_BTN);
     gpio_set_dir(PIN_JOY_BTN, GPIO_IN);
     gpio_pull_up(PIN_JOY_BTN);
+
+    gpio_init(PIN_BTN_MENU);
+    gpio_set_dir(PIN_BTN_MENU, GPIO_IN);
+    gpio_pull_up(PIN_BTN_MENU);
+
+    gpio_init(PIN_BTN_BACK);
+    gpio_set_dir(PIN_BTN_BACK, GPIO_IN);
+    gpio_pull_up(PIN_BTN_BACK);
 }
 
 input_state_t input_read(void)
@@ -83,6 +95,10 @@ input_state_t input_read(void)
 
     st.button_held = btn_raw;
     st.button_pressed = false;
+    st.menu_held = false;
+    st.menu_pressed = false;
+    st.back_held = false;
+    st.back_pressed = false;
 
     if (btn_raw && !prev_btn_state) {
         if ((now - last_press_time) >= DEBOUNCE_MS) {
@@ -91,6 +107,28 @@ input_state_t input_read(void)
         }
     }
     prev_btn_state = btn_raw;
+
+    /* Menu button (GP21): active-low, debounced edge. */
+    bool menu_raw = !gpio_get(PIN_BTN_MENU);
+    st.menu_held = menu_raw;
+    if (menu_raw && !prev_menu_state) {
+        if ((now - last_menu_time) >= DEBOUNCE_MS) {
+            st.menu_pressed = true;
+            last_menu_time = now;
+        }
+    }
+    prev_menu_state = menu_raw;
+
+    /* Back button (GP26): active-low, debounced edge. */
+    bool back_raw = !gpio_get(PIN_BTN_BACK);
+    st.back_held = back_raw;
+    if (back_raw && !prev_back_state) {
+        if ((now - last_back_time) >= DEBOUNCE_MS) {
+            st.back_pressed = true;
+            last_back_time = now;
+        }
+    }
+    prev_back_state = back_raw;
 
     return st;
 }
@@ -101,9 +139,11 @@ void input_test(void)
     uint32_t end = to_ms_since_boot(get_absolute_time()) + 5000;
     while (to_ms_since_boot(get_absolute_time()) < end) {
         input_state_t s = input_read();
-        printf("X=%4d  Y=%4d  dir=%d  btn=%d/%d\n",
+        printf("X=%4d  Y=%4d  dir=%d  btn=%d/%d  menu=%d/%d  back=%d/%d\n",
                s.raw_x, s.raw_y, s.direction,
-               s.button_pressed, s.button_held);
+               s.button_pressed, s.button_held,
+               s.menu_pressed, s.menu_held,
+               s.back_pressed, s.back_held);
         sleep_ms(100);
     }
     printf("=== Joystick Test Done ===\n");

@@ -40,6 +40,8 @@ static void reset_round(flappy_game_t* g) {
         g->pipes[i].scored = false;
     }
 
+    g->pipe_rect_count = 0;
+    g->pipe_rect_count_prev = 0;
     flappy_game_build_render_data(g);
     g->redraw_all = true;
 }
@@ -65,6 +67,11 @@ static bool rect_overlap(flappy_rect_t a, flappy_rect_t b) {
 }
 
 void flappy_game_build_render_data(flappy_game_t* g) {
+    g->pipe_rect_count_prev = g->pipe_rect_count;
+    for (int i = 0; i < g->pipe_rect_count_prev; i++) {
+        g->pipe_draw_rects_prev[i] = g->pipe_draw_rects[i];
+    }
+
     g->pipe_rect_count = 0;
     for (int i = 0; i < FLAPPY_PIPE_COUNT; i++) {
         flappy_pipe_t* p = &g->pipes[i];

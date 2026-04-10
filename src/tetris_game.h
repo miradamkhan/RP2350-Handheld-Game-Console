@@ -87,7 +87,8 @@ typedef enum {
     TETRIS_ACTION_DOWN    = (1 << 2),   /* soft drop  */
     TETRIS_ACTION_ROTATE  = (1 << 3),
     TETRIS_ACTION_PAUSE   = (1 << 4),   /* toggle pause */
-    TETRIS_ACTION_SELECT  = (1 << 5)    /* menu start / restart */
+    TETRIS_ACTION_SELECT  = (1 << 5),   /* menu start / restart */
+    TETRIS_ACTION_HARD_DROP = (1 << 6)  /* instant drop+lock */
 } tetris_action_t;
 
 /* ── Tetromino shape data (shared read-only) ── */

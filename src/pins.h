@@ -65,6 +65,9 @@
 
 /* ── GPIO: Joystick select button (active-low, internal pull-up) ── */
 #define PIN_JOY_BTN     6   /* GP6 */
+/* Dedicated game-control buttons (active-low, internal pull-up). */
+#define PIN_BTN_MENU    21  /* GP21: pause/menu */
+#define PIN_BTN_BACK    26  /* GP26: back/exit  */
 
 /* ── PWM: Speaker ── */
 #define PIN_SPEAKER     30  /* GP30 */

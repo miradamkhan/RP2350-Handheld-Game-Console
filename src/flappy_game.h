@@ -7,6 +7,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "pins.h"
 
 /* Screen dimensions (portrait mode) */
 #define FLAPPY_SCREEN_W   TFT_WIDTH    /* 240 */
@@ -49,7 +50,9 @@ typedef struct {
 
     flappy_pipe_t pipes[FLAPPY_PIPE_COUNT];
     flappy_rect_t pipe_draw_rects[FLAPPY_PIPE_COUNT * 2]; /* top/bottom rect per pipe */
+    flappy_rect_t pipe_draw_rects_prev[FLAPPY_PIPE_COUNT * 2];
     int pipe_rect_count;
+    int pipe_rect_count_prev;
 
     bool redraw_all;
     int prev_score;
