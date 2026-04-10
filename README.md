@@ -106,5 +106,5 @@ Future updates are expected to be small improvements (stability, polish, and mai
 
 - Enio Hysa
 - Mir Adam Khan
-- Abdul Malik
+- Abdul Malik Busari
 - Dixon Wagner
