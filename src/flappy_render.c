@@ -102,7 +102,7 @@ void flappy_run(void)
     flappy_game_init(&game, (int)high_raw);
 
     int last_rendered_score = -1;
-    flappy_state_t last_state = FLAPPY_PLAYING;
+    flappy_state_t last_state = FLAPPY_WAITING;
 
     absolute_time_t next_tick = make_timeout_time_ms(GAME_DT_MS);
 
@@ -113,7 +113,15 @@ void flappy_run(void)
         while (time_reached(next_tick)) {
             next_tick = delayed_by_ms(next_tick, GAME_DT_MS);
 
-            if (game.state == FLAPPY_PLAYING) {
+            if (game.state == FLAPPY_WAITING) {
+                /* Bird is suspended — update checks for first flap */
+                flappy_game_update(&game, in.button_pressed, GAME_DT_MS / 1000.0f);
+
+                /* Render the static playfield while waiting */
+                render_playfield(&game, last_rendered_score);
+                game.redraw_all = false;
+
+            } else if (game.state == FLAPPY_PLAYING) {
                 flappy_game_update(&game, in.button_pressed, GAME_DT_MS / 1000.0f);
 
                 /* Sound triggers */
