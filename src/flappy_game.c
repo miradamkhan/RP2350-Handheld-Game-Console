@@ -46,14 +46,14 @@ static void reset_round(flappy_game_t* g) {
 
 void flappy_game_init(flappy_game_t* g, int loaded_high_score) {
     *g = (flappy_game_t){0};
-    g->state = FLAPPY_PLAYING;
+    g->state = FLAPPY_WAITING;
     g->high_score = loaded_high_score;
     reset_round(g);
 }
 
 void flappy_game_start(flappy_game_t* g) {
     reset_round(g);
-    g->state = FLAPPY_PLAYING;
+    g->state = FLAPPY_WAITING;
 }
 
 static bool rect_overlap(flappy_rect_t a, flappy_rect_t b) {
@@ -81,6 +81,15 @@ void flappy_game_update(flappy_game_t* g, bool flap, float dt_s) {
     g->bird_rect_prev = g->bird_rect_now;
 
     if (g->state == FLAPPY_OVER) {
+        return;
+    }
+
+    /* Wait for first input before starting physics */
+    if (g->state == FLAPPY_WAITING) {
+        if (flap) {
+            g->state = FLAPPY_PLAYING;
+            g->bird_vy = JUMP_VELOCITY;
+        }
         return;
     }
 

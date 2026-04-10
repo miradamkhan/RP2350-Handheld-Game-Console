@@ -15,7 +15,8 @@
 #define FLAPPY_PIPE_COUNT 3
 
 typedef enum {
-    FLAPPY_PLAYING = 0,
+    FLAPPY_WAITING = 0,
+    FLAPPY_PLAYING,
     FLAPPY_OVER
 } flappy_state_t;
 
